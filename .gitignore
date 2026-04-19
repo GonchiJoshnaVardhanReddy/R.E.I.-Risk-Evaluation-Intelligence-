@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local data and artifacts
+dataset/
+results/
+rei_model/
+rei_training_dataset.csv
+
+# Runtime state
+detection_log.json
+reputation_db.json
+
+# Environment files
+.env
+.venv/
+venv/

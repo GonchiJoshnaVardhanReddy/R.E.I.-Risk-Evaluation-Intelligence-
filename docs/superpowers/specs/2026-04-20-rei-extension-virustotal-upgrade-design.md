@@ -34,8 +34,7 @@ Implement VirusTotal functionality in `background.js` only (no extra module), wi
   - Ensure host permissions include:
     - `https://www.virustotal.com/*`
     - `http://127.0.0.1:8000/*`
-    - `https://*/*`
-    - `http://*/*`
+    - `<all_urls>`
 
 ### 2. VirusTotal settings in popup
 - Files: `extension/extension/popup.html`, `extension/extension/scripts/popup.js`
@@ -55,20 +54,24 @@ Implement VirusTotal functionality in `background.js` only (no extra module), wi
 - Flow:
   1. Read `vt_api_key` from storage.
   2. If missing, `console.warn("VirusTotal API key not configured")` and stop.
-  3. Skip if same URL as last scanned URL key.
-  4. Submit URL:
+  3. Enforce global cooldown (~20 seconds between scans). If cooldown active, skip silently.
+  4. Skip if same URL as last scanned URL key.
+  5. Encode URL before submission:
+     - `const encodedUrl = btoa(url).replace(/=+$/, '');`
+  6. Submit URL:
      - `POST https://www.virustotal.com/api/v3/urls`
-  5. Poll result:
+     - Use encoded value in request body.
+  7. Poll result:
      - `GET https://www.virustotal.com/api/v3/analyses/{analysis_id}`
-  6. Extract counts:
+  8. Extract counts:
      - `malicious`, `suspicious`, `harmless`
-  7. Compute risk:
+  9. Compute risk:
      - malicious > 0 → HIGH
      - else suspicious > 0 → MEDIUM
      - else LOW
-  8. Save latest URL result:
+  10. Save latest URL result:
      - `chrome.storage.local.set({ latest_url_scan_result: { ... } })`
-  9. If HIGH, keep current redirect behavior to `blocked.html`.
+  11. If HIGH, keep current redirect behavior to `blocked.html`.
 
 ### 4. Existing scanner isolation
 - Preserve existing `/analyze-text` request structure and message/email detection logic.
@@ -94,7 +97,8 @@ Implement VirusTotal functionality in `background.js` only (no extra module), wi
 1. Confirm manifest rename/description/version and permission blocks.
 2. Save/reload VT key in popup settings.
 3. Open/switch to new http/https pages; verify scans trigger once per unique URL.
-4. Confirm VT result parsing and risk mapping.
-5. Confirm latest URL result is stored and visible in popup.
-6. Confirm existing WhatsApp/Gmail/Outlook + local API flow still operates unchanged.
-7. Confirm warning logs appear for missing key/failures without breaking extension runtime.
+4. Confirm cooldown prevents scans more frequently than once per ~20 seconds.
+5. Confirm VT result parsing and risk mapping.
+6. Confirm latest URL result is stored and visible in popup.
+7. Confirm existing WhatsApp/Gmail/Outlook + local API flow still operates unchanged.
+8. Confirm warning logs appear for missing key/failures without breaking extension runtime.

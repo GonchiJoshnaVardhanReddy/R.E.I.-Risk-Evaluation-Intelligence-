@@ -9,6 +9,8 @@ The current `rei_control_center.py` interface is functionally complete but visua
   - Security-operations dark theme.
   - Balanced readability (clear hierarchy, moderate density).
   - App-wide stylesheet-driven approach.
+  - Add a top display-only protection status banner in the main panel.
+  - Add display-only dashboard threat summary counters sourced from existing `detection_log.json` data.
 - Out of scope:
   - Functional logic changes.
   - Workflow changes.
@@ -21,25 +23,38 @@ Use a centralized app-wide stylesheet with design tokens (color, typography, spa
 
 ### 1. Theme Foundation
 - Base palette:
-  - Background: deep navy/charcoal tones.
-  - Surface layers: slightly lighter cards/panels.
-  - Accent: cyan/blue for active controls.
-  - Status colors:
-    - Success/active: green
-    - Warning: orange
-    - Critical/high-risk: red
+  - HIGH risk: `#ff4d4f`
+  - MEDIUM risk: `#fa8c16`
+  - SUCCESS / ACTIVE: `#52c41a`
+  - PRIMARY accent: `#3daee9`
+  - BACKGROUND: `#0f172a`
+  - SURFACE panels: `#1e293b`
 - Typography:
   - Clear hierarchy for title, section headers, table text, and logs.
   - Balanced readability with moderate sizes and line spacing.
 
 ### 2. Layout and Visual Hierarchy
 - Keep current sidebar + main panel layout.
+- Add a horizontal top status strip in the main panel showing:
+  - `Real-Time Protection Active`
+  - `Scanner Engine Running`
+  - `File Monitor Active`
+  - `Reputation Engine Active`
+- Banner is display-only and reflects existing runtime state without changing backend logic.
 - Increase spacing consistency:
   - Shared margins/paddings for all group boxes.
   - Uniform vertical rhythm between panels.
 - Improve scan/action button prominence while preserving labels and actions.
 
-### 3. Component Styling
+### 3. Threat Summary Counters
+- Add a compact summary row near the top of the main panel:
+  - `Threats Today`
+  - `High Risk`
+  - `Medium Risk`
+- Populate counters from already loaded `detection_log.json` data.
+- No timer cadence changes and no API/service logic changes.
+
+### 4. Component Styling
 - Sidebar:
   - Distinct background panel and stronger title treatment.
 - Group boxes:
@@ -54,7 +69,7 @@ Use a centralized app-wide stylesheet with design tokens (color, typography, spa
 - Dialogs:
   - Consistent theme for message/result popups.
 
-### 4. Maintainability
+### 5. Maintainability
 - Add one `_apply_theme()` method in `REIControlCenter` called during initialization.
 - Prefer global stylesheet; use targeted object names sparingly where widget-specific styles are required.
 - Avoid inline styles unless they represent dynamic state coloring already required by logic.
@@ -67,6 +82,7 @@ Use a centralized app-wide stylesheet with design tokens (color, typography, spa
   - file parsing logic
   - restart/close behavior
 - UI updates must be appearance-only.
+- The banner and threat summary counters are display-only and reuse existing state/data flows.
 
 ## Error Handling
 - Existing warning dialogs and logging remain unchanged.
@@ -74,10 +90,12 @@ Use a centralized app-wide stylesheet with design tokens (color, typography, spa
 
 ## Validation Plan
 1. Launch `python rei_control_center.py`.
-2. Confirm all panels/buttons/dialogs render in dark theme.
-3. Verify service status labels still update normally.
-4. Verify threat/reputation tables still refresh and highlight appropriately.
-5. Verify manual scan buttons and restart buttons remain fully functional.
+2. Confirm top status banner is present and styled with active success state.
+3. Confirm threat summary counters render and update from detection log data.
+4. Confirm all panels/buttons/dialogs render in dark theme.
+5. Verify service status labels still update normally.
+6. Verify threat/reputation tables still refresh and highlight appropriately.
+7. Verify manual scan buttons and restart buttons remain fully functional.
 
 ## Implementation Notes
 - Keep edits isolated to `rei_control_center.py`.

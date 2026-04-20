@@ -56,11 +56,10 @@ Implement VirusTotal functionality in `background.js` only (no extra module), wi
   2. If missing, `console.warn("VirusTotal API key not configured")` and stop.
   3. Enforce global cooldown (~20 seconds between scans). If cooldown active, skip silently.
   4. Skip if same URL as last scanned URL key.
-  5. Encode URL before submission:
-     - `const encodedUrl = btoa(url).replace(/=+$/, '');`
-  6. Submit URL:
+  5. Submit URL (original URL, form-encoded):
      - `POST https://www.virustotal.com/api/v3/urls`
-     - Use encoded value in request body.
+     - `Content-Type: application/x-www-form-urlencoded`
+     - body: `url=<original_url>`
   7. Poll result:
      - `GET https://www.virustotal.com/api/v3/analyses/{analysis_id}`
   8. Extract counts:
@@ -72,6 +71,9 @@ Implement VirusTotal functionality in `background.js` only (no extra module), wi
   10. Save latest URL result:
      - `chrome.storage.local.set({ latest_url_scan_result: { ... } })`
   11. If HIGH, keep current redirect behavior to `blocked.html`.
+  12. If future URL-ID endpoint retrieval is needed, compute URL ID only for:
+      - `GET /api/v3/urls/{url_id}`
+      - `const url_id = btoa(url).replace(/=+$/, '');`
 
 ### 4. Existing scanner isolation
 - Preserve existing `/analyze-text` request structure and message/email detection logic.

@@ -5,7 +5,7 @@
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
-const { spawn } = require("child_process");
+const { spawn, execFile } = require("child_process");
 
 // ── Testable helpers (exported at bottom) ───────────────────
 
@@ -15,6 +15,9 @@ const SETTINGS_DEFAULTS = {
   enableFileScanning: true,
   enableReputationTracking: true,
 };
+const MONITOR_ACTIVITY_WINDOW_SECONDS = 10;
+const EXTENSION_ACTIVITY_WINDOW_MINUTES = 2;
+const STATUS_BROADCAST_INTERVAL_MS = 3000;
 
 function isSupportedPlatformEvent(platform) {
   return platform === "whatsapp" || platform === "email";
@@ -25,8 +28,21 @@ function inferExtensionConnectivity(entries, nowMs, minutesThreshold) {
   let latestExtTs = null;
 
   for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+
+    const metadataTs = typeof entry?.metadata?.last_extension_activity === "string"
+      ? new Date(entry.metadata.last_extension_activity).getTime()
+      : NaN;
+    if (Number.isFinite(metadataTs)) {
+      if (latestExtTs === null || metadataTs > latestExtTs) {
+        latestExtTs = metadataTs;
+      }
+      continue;
+    }
+
     if (!isSupportedPlatformEvent(entry.platform)) continue;
     const ts = new Date(entry.timestamp).getTime();
+    if (!Number.isFinite(ts)) continue;
     if (latestExtTs === null || ts > latestExtTs) {
       latestExtTs = ts;
     }
@@ -41,6 +57,11 @@ function inferExtensionConnectivity(entries, nowMs, minutesThreshold) {
     connected,
     lastExtensionEventAt: new Date(latestExtTs).toISOString(),
   };
+}
+
+function detectionLogRecentlyUpdated(mtimeMs, nowMs = Date.now(), thresholdSeconds = MONITOR_ACTIVITY_WINDOW_SECONDS) {
+  if (!Number.isFinite(mtimeMs) || mtimeMs <= 0) return false;
+  return (nowMs - mtimeMs) <= thresholdSeconds * 1000;
 }
 
 function mergeSettings(overrides) {
@@ -170,6 +191,7 @@ async function getStore() {
 let scannerProcess = null;
 let monitorProcess = null;
 let mainWindow = null;
+let statusBroadcastTimer = null;
 
 // ── Helpers ─────────────────────────────────────────────────
 function readJsonSafe(filePath, fallback) {
@@ -190,6 +212,89 @@ function isPortReachable(port, host = "127.0.0.1", timeout = 2000) {
     req.on("error", () => resolve(false));
     req.on("timeout", () => { req.destroy(); resolve(false); });
   });
+}
+
+function processListContains(marker) {
+  if (!marker || typeof marker !== "string") {
+    return Promise.resolve(false);
+  }
+
+  if (process.platform === "win32") {
+    const escaped = marker.replace(/'/g, "''");
+    const script = `$needle='${escaped}'; $hit = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'python' -and $_.CommandLine -like "*$needle*" } | Select-Object -First 1; if ($null -ne $hit) { 'true' } else { 'false' }`;
+    return new Promise((resolve) => {
+      execFile("powershell", ["-NoProfile", "-Command", script], { windowsHide: true, timeout: 2500 }, (error, stdout) => {
+        if (error) return resolve(false);
+        resolve(String(stdout).trim().toLowerCase().includes("true"));
+      });
+    });
+  }
+
+  return new Promise((resolve) => {
+    execFile("ps", ["-ax", "-o", "command="], { timeout: 2500 }, (error, stdout) => {
+      if (error) return resolve(false);
+      resolve(String(stdout).toLowerCase().includes(marker.toLowerCase()));
+    });
+  });
+}
+
+function detectionLogRecentlyUpdatedFromDisk() {
+  try {
+    const mtimeMs = fs.statSync(DETECTION_LOG).mtimeMs;
+    return detectionLogRecentlyUpdated(mtimeMs, Date.now(), MONITOR_ACTIVITY_WINDOW_SECONDS);
+  } catch {
+    return false;
+  }
+}
+
+async function isFileMonitorRunning() {
+  const hasMonitorProcess = await processListContains("file_monitor.py");
+  if (hasMonitorProcess) return true;
+  return detectionLogRecentlyUpdatedFromDisk();
+}
+
+async function buildSystemStatus() {
+  const scannerUp = await isPortReachable(8000);
+  const monitorUp = await isFileMonitorRunning();
+  const detLogExists = fs.existsSync(DETECTION_LOG);
+  const repDbExists = fs.existsSync(REPUTATION_DB);
+  const detectionEntries = detLogExists ? readJsonSafe(DETECTION_LOG, []) : [];
+  const extensionConnectivity = inferExtensionConnectivity(
+    Array.isArray(detectionEntries) ? detectionEntries : [],
+    Date.now(),
+    EXTENSION_ACTIVITY_WINDOW_MINUTES,
+  );
+  return {
+    scannerUp,
+    monitorUp,
+    detLogExists,
+    repDbExists,
+    extensionConnected: extensionConnectivity.connected,
+    lastExtensionEventAt: extensionConnectivity.lastExtensionEventAt,
+  };
+}
+
+async function pushStatusUpdate() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    const payload = await buildSystemStatus();
+    mainWindow.webContents.send("status-update", payload);
+  } catch (error) {
+    console.error("[Status] push failed:", error);
+  }
+}
+
+function startStatusBroadcast() {
+  if (statusBroadcastTimer) {
+    clearInterval(statusBroadcastTimer);
+  }
+  statusBroadcastTimer = setInterval(pushStatusUpdate, STATUS_BROADCAST_INTERVAL_MS);
+}
+
+function stopStatusBroadcast() {
+  if (!statusBroadcastTimer) return;
+  clearInterval(statusBroadcastTimer);
+  statusBroadcastTimer = null;
 }
 
 // ── Service Management ──────────────────────────────────────
@@ -228,6 +333,7 @@ function startFileMonitor() {
 }
 
 function stopServices() {
+  stopStatusBroadcast();
   if (scannerProcess) {
     try { process.kill(scannerProcess.pid, "SIGTERM"); } catch { /* ignore */ }
     scannerProcess = null;
@@ -271,18 +377,22 @@ function registerIpc() {
   ipcMain.handle("read-reputation-db", () => readJsonSafe(REPUTATION_DB, {}));
 
   ipcMain.handle("scanner-status", async () => {
-    const reachable = await isPortReachable(8000);
-    return { running: reachable };
+    const status = await buildSystemStatus();
+    return { running: status.scannerUp };
   });
-  ipcMain.handle("monitor-status", () => {
-    return { running: monitorProcess !== null && monitorProcess.exitCode === null };
+  ipcMain.handle("monitor-status", async () => {
+    const status = await buildSystemStatus();
+    return { running: status.monitorUp };
+  });
+  ipcMain.handle("extension-status", async () => {
+    const status = await buildSystemStatus();
+    return {
+      connected: status.extensionConnected,
+      lastExtensionEventAt: status.lastExtensionEventAt,
+    };
   });
   ipcMain.handle("system-status", async () => {
-    const scannerUp = await isPortReachable(8000);
-    const monitorUp = monitorProcess !== null && monitorProcess.exitCode === null;
-    const detLogExists = fs.existsSync(DETECTION_LOG);
-    const repDbExists = fs.existsSync(REPUTATION_DB);
-    return { scannerUp, monitorUp, detLogExists, repDbExists };
+    return buildSystemStatus();
   });
 
   ipcMain.handle("get-settings", async () => {
@@ -317,6 +427,8 @@ if (app) {
     createWindow();
     startScannerApi();
     startFileMonitor();
+    startStatusBroadcast();
+    pushStatusUpdate();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -337,6 +449,7 @@ if (app) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     inferExtensionConnectivity,
+    detectionLogRecentlyUpdated,
     mergeSettings,
     isSupportedPlatformEvent,
     canStopExternalProcess,

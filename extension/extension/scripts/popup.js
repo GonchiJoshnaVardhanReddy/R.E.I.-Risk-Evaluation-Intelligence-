@@ -15,25 +15,30 @@ function renderUrlScanResult(result) {
     return `<div class="empty-state">No URL scanned yet. Browse any website to trigger a scan.</div>`;
   }
 
-  const level = (result.risk_level || "LOW").toLowerCase();
+  const level = (result.combined_risk_level || result.risk_level || "LOW").toLowerCase();
+  const maliciousCount = Number(result.vt_malicious ?? result.malicious_count ?? 0);
+  const suspiciousCount = Number(result.vt_suspicious ?? result.suspicious_count ?? 0);
+  const harmlessCount = Number(result.vt_harmless ?? result.harmless_count ?? 0);
+  const localModelScore = Number(result.local_model_score ?? 0);
+  const localScoreLevel = localModelScore >= 0.75 ? "high" : localModelScore >= 0.55 ? "medium" : "low";
   const vtLevel = (result.virustotal_risk_level || result.sources?.virustotal || "LOW").toLowerCase();
   const localLevel = (result.local_risk_level || result.sources?.rei_local_model || "LOW").toLowerCase();
 
   return `
     <div class="url-result-card risk-${level}">
       <div class="url-result-url">${escHtml(result.url)}</div>
-      <div class="url-result-risk ${level}">${result.risk_level || "LOW"} RISK</div>
+      <div class="url-result-risk ${level}">${(result.combined_risk_level || result.risk_level || "LOW")} RISK</div>
       <div class="url-result-stats">
         <div class="url-stat">
-          <span class="url-stat-value mal">${result.malicious_count || 0}</span>
+          <span class="url-stat-value mal">${maliciousCount}</span>
           <span class="url-stat-label">Malicious</span>
         </div>
         <div class="url-stat">
-          <span class="url-stat-value sus">${result.suspicious_count || 0}</span>
+          <span class="url-stat-value sus">${suspiciousCount}</span>
           <span class="url-stat-label">Suspicious</span>
         </div>
         <div class="url-stat">
-          <span class="url-stat-value safe">${result.harmless_count || 0}</span>
+          <span class="url-stat-value safe">${harmlessCount}</span>
           <span class="url-stat-label">Harmless</span>
         </div>
       </div>
@@ -47,6 +52,10 @@ function renderUrlScanResult(result) {
           <span class="source-name">R.E.I. Local Model</span>
           <span class="source-badge ${localLevel}">${(result.local_risk_level || result.sources?.rei_local_model || "LOW").toUpperCase()}</span>
         </div>
+        <div class="source-row">
+          <span class="source-name">Local Model Score</span>
+          <span class="source-badge ${localScoreLevel}">${localModelScore.toFixed(2)}</span>
+        </div>
       </div>
     </div>
   `;
@@ -58,10 +67,11 @@ function formatLatestUrlScanResult(result) {
   }
   return [
     `URL: ${result.url}`,
-    `Risk: ${result.risk_level || "LOW"}`,
-    `Malicious: ${Number(result.malicious_count || 0)}`,
-    `Suspicious: ${Number(result.suspicious_count || 0)}`,
-    `Harmless: ${Number(result.harmless_count || 0)}`,
+    `Risk: ${result.combined_risk_level || result.risk_level || "LOW"}`,
+    `Malicious: ${Number(result.vt_malicious ?? result.malicious_count ?? 0)}`,
+    `Suspicious: ${Number(result.vt_suspicious ?? result.suspicious_count ?? 0)}`,
+    `Harmless: ${Number(result.vt_harmless ?? result.harmless_count ?? 0)}`,
+    `Local Model Score: ${Number(result.local_model_score ?? 0).toFixed(2)}`,
   ].join("\n");
 }
 

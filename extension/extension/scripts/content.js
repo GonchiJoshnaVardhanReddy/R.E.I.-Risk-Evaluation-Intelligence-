@@ -18,6 +18,8 @@ const PHONE_REGEX = /\+?\d[\d\s-]{7,}\d/;
 const UNKNOWN_SENDER = "unknown_sender";
 const SCAN_DEBOUNCE_MS = 250;
 const EMAIL_SCAN_DEBOUNCE_MS = 400;
+const MEDIUM_WARNING_THRESHOLD = 0.55;
+const HIGH_WARNING_THRESHOLD = 0.75;
 const MAX_TRACKED_SIGNATURES = 2000;
 const MAX_TRACKED_IDS = 4000;
 
@@ -30,6 +32,7 @@ let mutationQueue = new Set();
 let mutationTimer = null;
 let emailScanTimer = null;
 let lastHref = window.location.href;
+let observedRoot = null;
 
 // ── Tracking helpers ────────────────────────────────────────────
 
@@ -84,6 +87,13 @@ function normalizeRiskResult(rawResult) {
     score: typeof rawResult?.score === "number" ? rawResult.score : Math.round(normalizedRiskScore * 100),
     reasons: explanations.length ? explanations : ["No immediate red flags detected"],
   };
+}
+
+function riskLevelFromScore(score) {
+  const normalizedScore = Number.isFinite(Number(score)) ? Number(score) : 0;
+  if (normalizedScore >= HIGH_WARNING_THRESHOLD) return "HIGH";
+  if (normalizedScore >= MEDIUM_WARNING_THRESHOLD) return "MEDIUM";
+  return "LOW";
 }
 
 // ── Duplicate prevention ────────────────────────────────────────
@@ -196,7 +206,10 @@ function analyzeDetectedContent(text, sender, platform, container) {
         risk_level: result.risk_level,
         explanations: result.explanations,
       });
-      if ((result.risk_level === "HIGH" || result.risk_level === "MEDIUM") && container) {
+      if (result.risk_score < MEDIUM_WARNING_THRESHOLD) return;
+      result.risk_level = riskLevelFromScore(result.risk_score);
+      result.score = Math.round(result.risk_score * 100);
+      if (container) {
         injectWarning(container, result);
       }
     }
@@ -266,19 +279,21 @@ function processWhatsAppNode(node) {
 // ── Gmail scanning ──────────────────────────────────────────────
 
 function scanGmail() {
-  const candidates = document.querySelectorAll("div.adn.ads, div[role='listitem']");
-  candidates.forEach((container) => {
-    const bodyNode = container.querySelector("div.a3s.aiL, div.a3s");
-    if (!bodyNode || bodyNode.dataset.reiEmailCandidate === "ignored") return;
-    const text = normalizeWhitespace(bodyNode.innerText);
-    if (!text || text.length < 10) return;
-    const sender = extractGmailSender(container);
-    const urls = getUniqueUrls(text);
-    const enrichedText = enrichTextWithUrls(text, urls);
-    const signature = `email|${sender}|${enrichedText}`;
-    if (!markProcessed(bodyNode, signature, "gmail")) return;
-    analyzeDetectedContent(enrichedText, sender, "email", bodyNode);
-  });
+  const mainRegion = document.querySelector("[role='main']");
+  if (!mainRegion) return;
+  const emailBody = document.querySelector("div.a3s") || mainRegion.querySelector("div.a3s");
+  const scanContainer = emailBody || mainRegion;
+  const text = normalizeWhitespace(scanContainer.innerText);
+  if (!text || text.length < 10) return;
+
+  const senderNode = document.querySelector("span[email]");
+  const senderCandidate = senderNode?.getAttribute("email") || senderNode?.textContent || extractGmailSender(mainRegion);
+  const sender = extractEmail(senderCandidate) || UNKNOWN_SENDER;
+  const urls = getUniqueUrls(text);
+  const enrichedText = enrichTextWithUrls(text, urls);
+  const signature = `email|${sender}|${enrichedText}`;
+  if (!markProcessed(scanContainer, signature, "gmail")) return;
+  analyzeDetectedContent(enrichedText, sender, "email", scanContainer);
 }
 
 // ── Outlook scanning ────────────────────────────────────────────
@@ -347,8 +362,13 @@ const observer = new MutationObserver((mutations) => {
 });
 
 function startObserver() {
-  if (!document.body) return;
-  observer.observe(document.body, { childList: true, subtree: true });
+  const root = PLATFORM === "email"
+    ? (document.querySelector("[role='main']") || document.body)
+    : document.body;
+  if (!root || root === observedRoot) return;
+  observer.disconnect();
+  observedRoot = root;
+  observer.observe(root, { childList: true, subtree: true });
 }
 
 function runInitialScan() {
@@ -367,6 +387,7 @@ if (PLATFORM !== "unknown") {
 
   if (PLATFORM === "email") {
     window.setInterval(() => {
+      startObserver();
       if (window.location.href !== lastHref) {
         lastHref = window.location.href;
         scheduleEmailScan();

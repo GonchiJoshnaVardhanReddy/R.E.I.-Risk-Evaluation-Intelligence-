@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const {
   inferExtensionConnectivity,
+  detectionLogRecentlyUpdated,
   mergeSettings,
   isSupportedPlatformEvent,
   canStopExternalProcess,
@@ -42,6 +43,32 @@ test("inferExtensionConnectivity marks disconnected when latest event is stale",
   const entries = [{ platform: "email", timestamp: "2026-04-20T23:40:00Z" }];
   const result = inferExtensionConnectivity(entries, now, 10);
   assert.equal(result.connected, false);
+});
+
+test("inferExtensionConnectivity supports metadata.last_extension_activity timestamps", () => {
+  const now = new Date("2026-04-21T00:00:00Z").getTime();
+  const entries = [
+    {
+      platform: "url",
+      timestamp: "2026-04-20T23:40:00Z",
+      metadata: { last_extension_activity: "2026-04-20T23:59:30Z" },
+    }
+  ];
+  const result = inferExtensionConnectivity(entries, now, 2);
+  assert.equal(result.connected, true);
+  assert.equal(result.lastExtensionEventAt, "2026-04-20T23:59:30.000Z");
+});
+
+test("detectionLogRecentlyUpdated returns true for recent mtime", () => {
+  const nowMs = new Date("2026-04-21T00:00:10Z").getTime();
+  const recentMtime = new Date("2026-04-21T00:00:04Z").getTime();
+  assert.equal(detectionLogRecentlyUpdated(recentMtime, nowMs, 10), true);
+});
+
+test("detectionLogRecentlyUpdated returns false for stale mtime", () => {
+  const nowMs = new Date("2026-04-21T00:00:10Z").getTime();
+  const staleMtime = new Date("2026-04-20T23:59:40Z").getTime();
+  assert.equal(detectionLogRecentlyUpdated(staleMtime, nowMs, 10), false);
 });
 
 test("mergeSettings applies defaults and keeps explicit false values", () => {

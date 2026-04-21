@@ -1,6 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "R.E.I. Risk Evaluation Intelligence",
+  "name": "__MSG_extension_name__",
+  "default_locale": "en",
   "version": "1.0.0",
   "description": "Offline multi-channel scam detection and website risk intelligence assistant powered by local AI and VirusTotal URL analysis.",
   "permissions": [

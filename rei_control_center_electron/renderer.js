@@ -1,683 +1,867 @@
 // ═════════════════════════════════════════════════════════════════
-//  R.E.I. Control Center — Renderer (all page logic)
+//  R.E.I. Control Center — Renderer
 // ═════════════════════════════════════════════════════════════════
 
-const API_BASE = 'http://127.0.0.1:8000';
+const API_BASE = "http://127.0.0.1:8000";
 
-// ── Routing ──────────────────────────────────────────────────────
-const navItems = typeof document !== "undefined" ? document.querySelectorAll('.nav-item') : [];
-const pages    = typeof document !== "undefined" ? document.querySelectorAll('.page') : [];
-let activePage = 'dashboard';
+const navItems = typeof document !== "undefined" ? document.querySelectorAll(".nav-item") : [];
+const pages = typeof document !== "undefined" ? document.querySelectorAll(".page") : [];
+let activePage = "dashboard";
 const intervals = {};
+let latestSystemStatus = null;
+const chartState = {
+  timeline: null,
+  risk: null,
+};
+const PERSISTENT_INTERVAL_KEYS = new Set(["clock", "headerStatus"]);
+const STATUS_ICON_MAP = {
+  scanner: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3 4 8v8l8 5 8-5V8l-8-5Zm0 2.2L18 8.7v6.6l-6 3.8-6-3.8V8.7l6-3.5ZM8.5 12a3.5 3.5 0 1 0 7 0 3.5 3.5 0 0 0-7 0Z"/>
+    </svg>
+  `,
+  monitor: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 4h16v12H4V4Zm2 2v8h12V6H6Zm4 12h4v2h-4v-2Z"/>
+    </svg>
+  `,
+  extension: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M9 3h6v4h3a3 3 0 0 1 3 3v4h-2v-4a1 1 0 0 0-1-1h-3v2H9V9H6a1 1 0 0 0-1 1v4H3v-4a3 3 0 0 1 3-3h3V3Zm2 2v4h2V5h-2Zm-2 8h6v8H9v-8Z"/>
+    </svg>
+  `,
+  stores: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 4h16v5H4V4Zm0 7h16v9H4v-9Zm2-5v1h12V6H6Zm0 7v5h12v-5H6Z"/>
+    </svg>
+  `,
+};
 
+// ── Base Helpers ────────────────────────────────────────────────
+function clearAllIntervals({ preservePersistent = false } = {}) {
+  Object.keys(intervals).forEach((key) => {
+    if (preservePersistent && PERSISTENT_INTERVAL_KEYS.has(key)) return;
+    clearInterval(intervals[key]);
+    delete intervals[key];
+  });
+}
+
+function destroyOverviewCharts() {
+  Object.keys(chartState).forEach((key) => {
+    const chart = chartState[key];
+    if (chart && typeof chart.destroy === "function") {
+      chart.destroy();
+    }
+    chartState[key] = null;
+  });
+}
+
+function escHtml(value) {
+  const div = document.createElement("div");
+  div.textContent = String(value ?? "");
+  return div.innerHTML;
+}
+
+function toDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function timeAgo(isoStr) {
+  const date = toDate(isoStr);
+  if (!date) return "—";
+  const diffSeconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (diffSeconds < 60) return `${Math.max(diffSeconds, 0)}s ago`;
+  if (diffSeconds < 3600) return `${Math.floor(diffSeconds / 60)}m ago`;
+  if (diffSeconds < 86400) return `${Math.floor(diffSeconds / 3600)}h ago`;
+  return `${Math.floor(diffSeconds / 86400)}d ago`;
+}
+
+function formatTimestamp(isoStr) {
+  const date = toDate(isoStr);
+  if (!date) return "—";
+  return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+}
+
+function levelClass(level) {
+  const normalized = String(level || "LOW").toUpperCase();
+  if (normalized === "HIGH") return "critical";
+  if (normalized === "MEDIUM") return "warning";
+  return "safe";
+}
+
+function badgeHtml(level) {
+  const normalized = String(level || "LOW").toUpperCase();
+  return `<span class="risk-badge ${levelClass(normalized)}">${normalized}</span>`;
+}
+
+function statusModel({ online, degraded = false }) {
+  if (online) return { label: "Running", cls: "running" };
+  if (degraded) return { label: "Degraded", cls: "degraded" };
+  return { label: "Offline", cls: "offline" };
+}
+
+function extensionHealthFromStatus(statusPayload) {
+  const last = statusPayload?.lastExtensionEventAt;
+  if (!last) return { label: "Offline", cls: "offline", subtitle: "No activity detected" };
+  const lastTs = toDate(last);
+  if (!lastTs) return { label: "Offline", cls: "offline", subtitle: "Invalid activity timestamp" };
+  const ageSeconds = (Date.now() - lastTs.getTime()) / 1000;
+  if (ageSeconds <= 120) return { label: "Active", cls: "running", subtitle: `Last activity ${timeAgo(last)}` };
+  if (ageSeconds <= 600) return { label: "Idle", cls: "degraded", subtitle: `Last activity ${timeAgo(last)}` };
+  return { label: "Offline", cls: "offline", subtitle: `Last activity ${timeAgo(last)}` };
+}
+
+async function getSystemStatus() {
+  if (latestSystemStatus) return latestSystemStatus;
+  return window.rei.systemStatus();
+}
+
+async function getMetricsSnapshot() {
+  if (window.reiSystemMetrics && typeof window.reiSystemMetrics.getSnapshot === "function") {
+    return window.reiSystemMetrics.getSnapshot();
+  }
+  return {
+    cpuPercent: 0,
+    ramPercent: 0,
+    networkThroughputMbps: 0,
+  };
+}
+
+// ── Header ──────────────────────────────────────────────────────
+function updateClock() {
+  const clock = document.getElementById("system-clock");
+  if (!clock) return;
+  clock.textContent = new Date().toLocaleTimeString();
+}
+
+async function updateHeaderStatus() {
+  try {
+    const status = await getSystemStatus();
+    const scanner = document.getElementById("scanner-indicator");
+    if (!scanner) return;
+    if (status.scannerUp) {
+      scanner.className = "status-pill running";
+      scanner.textContent = "Scanner Online";
+    } else {
+      scanner.className = "status-pill offline";
+      scanner.textContent = "Scanner Offline";
+    }
+  } catch (_error) {
+    const scanner = document.getElementById("scanner-indicator");
+    if (!scanner) return;
+    scanner.className = "status-pill offline";
+    scanner.textContent = "Scanner Offline";
+  }
+}
+
+function startHeaderServices() {
+  updateClock();
+  updateHeaderStatus();
+  intervals.clock = setInterval(updateClock, 1000);
+  intervals.headerStatus = setInterval(updateHeaderStatus, 3000);
+}
+
+// ── Routing ─────────────────────────────────────────────────────
 function navigateTo(page) {
+  const previousPage = activePage;
   activePage = page;
-  navItems.forEach(n => n.classList.toggle('active', n.dataset.page === page));
-  pages.forEach(p => p.classList.toggle('active', p.id === `page-${page}`));
-  clearAllIntervals();
+  navItems.forEach((item) => item.classList.toggle("active", item.dataset.page === page));
+  pages.forEach((section) => section.classList.toggle("active", section.id === `page-${page}`));
+  if (previousPage === "dashboard" && page !== "dashboard") {
+    destroyOverviewCharts();
+  }
+  clearAllIntervals({ preservePersistent: true });
   initPage(page);
 }
 
 if (typeof document !== "undefined") {
-  navItems.forEach(item => {
-    item.addEventListener('click', () => navigateTo(item.dataset.page));
+  navItems.forEach((item) => {
+    item.addEventListener("click", () => navigateTo(item.dataset.page));
   });
 }
 
-function clearAllIntervals() {
-  Object.keys(intervals).forEach(k => { clearInterval(intervals[k]); delete intervals[k]; });
-}
-
-// ── Helpers ──────────────────────────────────────────────────────
-function escHtml(str) {
-  const d = document.createElement('div');
-  d.textContent = String(str);
-  return d.innerHTML;
-}
-
-function timeAgo(isoStr) {
-  const diff = (Date.now() - new Date(isoStr).getTime()) / 1000;
-  if (diff < 60) return `${Math.floor(diff)}s ago`;
-  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
-  return `${Math.floor(diff/86400)}d ago`;
-}
-
-function badgeHtml(level) {
-  const l = (level || 'low').toLowerCase();
-  const icon = l === 'high' ? '🔴' : l === 'medium' ? '🟠' : '🟢';
-  return `<span class="badge ${l}">${icon} ${level}</span>`;
-}
-
-function riskyRowClass(level) {
-  const l = (level || '').toUpperCase();
-  if (l === 'HIGH') return 'risk-high';
-  if (l === 'MEDIUM') return 'risk-medium';
-  return '';
-}
-
-// ── Page Init Dispatch ───────────────────────────────────────────
 function initPage(page) {
   switch (page) {
-    case 'dashboard':  initDashboard();  break;
-    case 'protection': initProtection(); break;
-    case 'history':    initHistory();    break;
-    case 'reputation': initReputation(); break;
-    case 'scan':       initScan();       break;
-    case 'status':     initStatus();     break;
-    case 'settings':   initSettings();   break;
+    case "dashboard":
+      initOverview();
+      break;
+    case "protection":
+      initProtection();
+      break;
+    case "history":
+      initHistory();
+      break;
+    case "reputation":
+      initReputation();
+      break;
+    case "scan":
+      initScanCenter();
+      break;
+    case "reports":
+      initReports();
+      break;
+    case "settings":
+      initSettings();
+      break;
+    default:
+      initOverview();
+      break;
   }
 }
 
-// ═════════════════════════════════════════════════════════════════
-//  DASHBOARD
-// ═════════════════════════════════════════════════════════════════
-function initDashboard() {
-  const el = document.getElementById('page-dashboard');
-  el.innerHTML = `
+// ── Charts ──────────────────────────────────────────────────────
+function ensureTimelineChart(labels, values) {
+  const canvas = document.getElementById("overview-timeline-chart");
+  if (!canvas || typeof Chart === "undefined") return;
+  if (chartState.timeline && chartState.timeline.canvas !== canvas) {
+    chartState.timeline.destroy();
+    chartState.timeline = null;
+  }
+
+  if (!chartState.timeline) {
+    chartState.timeline = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Detections / minute",
+            data: values,
+            borderColor: "#22c55e",
+            backgroundColor: "rgba(34,197,94,0.20)",
+            fill: true,
+            tension: 0.3,
+            pointRadius: 2,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(255,255,255,0.06)" } },
+          y: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(255,255,255,0.06)" }, beginAtZero: true },
+        },
+      },
+    });
+    return;
+  }
+
+  chartState.timeline.data.labels = labels;
+  chartState.timeline.data.datasets[0].data = values;
+  chartState.timeline.update("none");
+}
+
+function ensureRiskChart(values) {
+  const canvas = document.getElementById("overview-risk-chart");
+  if (!canvas || typeof Chart === "undefined") return;
+  if (chartState.risk && chartState.risk.canvas !== canvas) {
+    chartState.risk.destroy();
+    chartState.risk = null;
+  }
+
+  if (!chartState.risk) {
+    chartState.risk = new Chart(canvas, {
+      type: "doughnut",
+      data: {
+        labels: ["LOW", "MEDIUM", "HIGH"],
+        datasets: [
+          {
+            data: values,
+            backgroundColor: ["#22c55e", "#f59e0b", "#ef4444"],
+            borderColor: "#111a2e",
+            borderWidth: 2,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: "#94a3b8" } },
+        },
+      },
+    });
+    return;
+  }
+
+  chartState.risk.data.datasets[0].data = values;
+  chartState.risk.update("none");
+}
+
+function detectionsPerMinute(logs, minutes = 10) {
+  const now = new Date();
+  now.setSeconds(0, 0);
+  const labels = [];
+  const values = [];
+
+  for (let i = minutes - 1; i >= 0; i -= 1) {
+    const slot = new Date(now.getTime() - i * 60_000);
+    const slotKey = slot.toISOString().slice(11, 16);
+    labels.push(slotKey);
+    values.push(0);
+  }
+
+  const firstSlot = new Date(now.getTime() - (minutes - 1) * 60_000).getTime();
+  logs.forEach((entry) => {
+    const ts = toDate(entry?.timestamp);
+    if (!ts) return;
+    const tsMs = ts.getTime();
+    if (tsMs < firstSlot || tsMs > now.getTime() + 59_999) return;
+    const index = Math.floor((tsMs - firstSlot) / 60_000);
+    if (index >= 0 && index < values.length) values[index] += 1;
+  });
+
+  return { labels, values };
+}
+
+// ── Overview (SOC Dashboard) ────────────────────────────────────
+function initOverview() {
+  const page = document.getElementById("page-dashboard");
+  page.innerHTML = `
     <div class="page-header">
-      <h1>Dashboard</h1>
-      <p>Real-time threat intelligence overview</p>
+      <h1>Overview</h1>
+      <p>Security operations center view for platform health and active threats.</p>
     </div>
-    <div id="dash-banner"></div>
-    <div class="stats-grid" id="dash-stats"></div>
-    <div class="two-col">
-      <div class="card">
+
+    <div class="soc-grid dashboard-row dashboard-row-metrics">
+      <div class="soc-card metric-card">
+        <div class="metric-label">CPU Usage</div>
+        <div class="metric-value" id="metric-cpu-value">0%</div>
+        <div class="metric-bar"><div id="metric-cpu-bar" class="metric-fill safe"></div></div>
+      </div>
+      <div class="soc-card metric-card">
+        <div class="metric-label">RAM Usage</div>
+        <div class="metric-value" id="metric-ram-value">0%</div>
+        <div class="metric-bar"><div id="metric-ram-bar" class="metric-fill warning"></div></div>
+      </div>
+      <div class="soc-card metric-card">
+        <div class="metric-label">Network Activity</div>
+        <div class="metric-value" id="metric-net-value">0 Mbps</div>
+        <div class="metric-bar"><div id="metric-net-bar" class="metric-fill accent"></div></div>
+      </div>
+      <div class="soc-card metric-card">
+        <div class="metric-label">Threats Blocked Today</div>
+        <div class="metric-value" id="metric-threats-value">0</div>
+        <div class="metric-sub">MEDIUM + HIGH detections</div>
+      </div>
+    </div>
+
+    <div class="soc-grid dashboard-row dashboard-row-status">
+      <div class="soc-card status-card" id="status-card-scanner"></div>
+      <div class="soc-card status-card" id="status-card-monitor"></div>
+      <div class="soc-card status-card" id="status-card-extension"></div>
+    </div>
+
+    <div class="soc-grid dashboard-row dashboard-row-charts">
+      <div class="soc-card chart-card">
+        <div class="card-title">Detection Timeline (Last 10 Minutes)</div>
+        <div class="chart-box"><canvas id="overview-timeline-chart"></canvas></div>
+      </div>
+      <div class="soc-card chart-card">
         <div class="card-title">Risk Distribution</div>
-        <div class="chart-container" id="dash-chart"></div>
+        <div class="chart-box"><canvas id="overview-risk-chart"></canvas></div>
       </div>
-      <div class="card">
-        <div class="card-title">Recent Detections</div>
-        <div class="table-wrapper" style="max-height:340px;overflow-y:auto">
-          <table><thead><tr>
-            <th>Time</th><th>Platform</th><th>Sender</th><th>Risk</th>
-          </tr></thead><tbody id="dash-recent"></tbody></table>
-        </div>
-      </div>
-    </div>`;
-  refreshDashboard();
-  intervals.dashboard = setInterval(refreshDashboard, 5000);
+    </div>
+
+    <div class="soc-card alerts-card dashboard-row dashboard-row-alerts">
+      <div class="card-title">Live Alerts Stream</div>
+      <div id="alerts-stream" class="alerts-stream"></div>
+    </div>
+  `;
+
+  refreshOverview();
+  intervals.overviewData = setInterval(refreshOverview, 5000);
+  intervals.overviewMetrics = setInterval(refreshMetricsOnly, 2000);
 }
 
-async function refreshDashboard() {
-  if (activePage !== 'dashboard') return;
+function renderStatusCard(id, title, iconKey, statusValue, subtitle) {
+  const element = document.getElementById(id);
+  if (!element) return;
+  const icon = STATUS_ICON_MAP[iconKey] || STATUS_ICON_MAP.scanner;
+  element.innerHTML = `
+    <div class="status-icon">${icon}</div>
+    <div class="status-content">
+      <div class="status-title">${title}</div>
+      <div class="status-line">
+        <span class="status-dot ${statusValue.cls}"></span>
+        <span class="status-label">${statusValue.label}</span>
+      </div>
+      <div class="status-sub">${escHtml(subtitle)}</div>
+    </div>
+  `;
+}
+
+function metricFillClass(value) {
+  if (value >= 85) return "critical";
+  if (value >= 65) return "warning";
+  return "safe";
+}
+
+async function refreshMetricsOnly() {
+  if (activePage !== "dashboard") return;
+  const metrics = await getMetricsSnapshot();
+  const cpu = Number(metrics.cpuPercent || 0);
+  const ram = Number(metrics.ramPercent || 0);
+  const net = Number(metrics.networkThroughputMbps || 0);
+
+  const cpuValue = document.getElementById("metric-cpu-value");
+  const cpuBar = document.getElementById("metric-cpu-bar");
+  const ramValue = document.getElementById("metric-ram-value");
+  const ramBar = document.getElementById("metric-ram-bar");
+  const netValue = document.getElementById("metric-net-value");
+  const netBar = document.getElementById("metric-net-bar");
+
+  if (cpuValue) cpuValue.textContent = `${cpu.toFixed(1)}%`;
+  if (cpuBar) {
+    cpuBar.style.width = `${Math.min(cpu, 100)}%`;
+    cpuBar.className = `metric-fill ${metricFillClass(cpu)}`;
+  }
+
+  if (ramValue) ramValue.textContent = `${ram.toFixed(1)}%`;
+  if (ramBar) {
+    ramBar.style.width = `${Math.min(ram, 100)}%`;
+    ramBar.className = `metric-fill ${metricFillClass(ram)}`;
+  }
+
+  if (netValue) netValue.textContent = `${net.toFixed(1)} Mbps`;
+  if (netBar) netBar.style.width = `${Math.min(Math.max(net, 0), 100)}%`;
+}
+
+async function refreshOverview() {
+  if (activePage !== "dashboard") return;
   try {
-    const logs = await window.rei.readDetectionLog();
-    const scannerSt = await window.rei.scannerStatus();
+    const [logs, status] = await Promise.all([
+      window.rei.readDetectionLog(),
+      getSystemStatus(),
+    ]);
 
-    // Banner
-    const banner = document.getElementById('dash-banner');
-    if (scannerSt.running) {
-      banner.innerHTML = `<div class="status-banner online"><div class="pulse"></div> Protection Active — R.E.I. Scanner Online</div>`;
-    } else {
-      banner.innerHTML = `<div class="status-banner offline"><div class="pulse"></div> Protection Offline — Scanner Unreachable</div>`;
+    const safeLogs = Array.isArray(logs) ? logs : [];
+    const todayPrefix = new Date().toISOString().slice(0, 10);
+    const blockedToday = safeLogs.filter((entry) => {
+      const ts = String(entry?.timestamp || "");
+      const level = String(entry?.risk_level || "").toUpperCase();
+      return ts.startsWith(todayPrefix) && (level === "MEDIUM" || level === "HIGH");
+    }).length;
+    const blockedElement = document.getElementById("metric-threats-value");
+    if (blockedElement) blockedElement.textContent = String(blockedToday);
+
+    await refreshMetricsOnly();
+
+    renderStatusCard(
+      "status-card-scanner",
+      "Scanner API",
+      "scanner",
+      statusModel({ online: !!status.scannerUp }),
+      status.scannerUp ? "Model endpoint reachable" : "No response from scanner endpoint",
+    );
+    renderStatusCard(
+      "status-card-monitor",
+      "File Monitor",
+      "monitor",
+      statusModel({ online: !!status.monitorUp }),
+      status.monitorUp ? "File monitor is running" : "No active file monitor process",
+    );
+    const extHealth = extensionHealthFromStatus(status);
+    renderStatusCard(
+      "status-card-extension",
+      "Extension Activity",
+      "extension",
+      { label: extHealth.label, cls: extHealth.cls },
+      extHealth.subtitle,
+    );
+
+    const minuteData = detectionsPerMinute(safeLogs, 10);
+    ensureTimelineChart(minuteData.labels, minuteData.values);
+
+    const high = safeLogs.filter((entry) => String(entry?.risk_level).toUpperCase() === "HIGH").length;
+    const medium = safeLogs.filter((entry) => String(entry?.risk_level).toUpperCase() === "MEDIUM").length;
+    const low = safeLogs.filter((entry) => String(entry?.risk_level).toUpperCase() === "LOW").length;
+    ensureRiskChart([low, medium, high]);
+
+    const alertsStream = document.getElementById("alerts-stream");
+    if (alertsStream) {
+      const recentAlerts = [...safeLogs].reverse().slice(0, 10);
+      const streamRows = recentAlerts.map((entry) => {
+        const level = String(entry?.risk_level || "LOW").toUpperCase();
+        const reasonList = Array.isArray(entry?.explanations) ? entry.explanations : [];
+        const reason = reasonList[0] || "No explanation provided";
+        return `
+          <div class="alert-row ${levelClass(level)}">
+            <div class="alert-time">${escHtml(formatTimestamp(entry?.timestamp))}</div>
+            <div class="alert-platform">${escHtml(entry?.platform || "unknown")}</div>
+            <div class="alert-risk">${badgeHtml(level)}</div>
+            <div class="alert-reason">${escHtml(reason)}</div>
+          </div>
+        `;
+      }).join("");
+      alertsStream.innerHTML = streamRows
+        ? `
+          <div class="alert-header">
+            <span>Timestamp</span>
+            <span>Platform</span>
+            <span>Risk</span>
+            <span>Reason</span>
+          </div>
+          ${streamRows}
+        `
+        : `<div class="empty-state">No detections yet.</div>`;
     }
-
-    // Count today
-    const todayStr = new Date().toISOString().slice(0,10);
-    const todayLogs = logs.filter(l => l.timestamp && l.timestamp.startsWith(todayStr));
-    const highCount  = logs.filter(l => l.risk_level === 'HIGH').length;
-    const medCount   = logs.filter(l => l.risk_level === 'MEDIUM').length;
-    const todayCount = todayLogs.length;
-
-    document.getElementById('dash-stats').innerHTML = `
-      <div class="stat-card accent">
-        <div class="stat-icon accent">📡</div>
-        <div class="stat-info">
-          <div class="stat-value">${todayCount}</div>
-          <div class="stat-label">Threats Today</div>
-        </div>
-      </div>
-      <div class="stat-card danger">
-        <div class="stat-icon danger">🔴</div>
-        <div class="stat-info">
-          <div class="stat-value">${highCount}</div>
-          <div class="stat-label">High Risk (All Time)</div>
-        </div>
-      </div>
-      <div class="stat-card warning">
-        <div class="stat-icon warning">🟠</div>
-        <div class="stat-info">
-          <div class="stat-value">${medCount}</div>
-          <div class="stat-label">Medium Risk (All Time)</div>
-        </div>
-      </div>
-      <div class="stat-card success">
-        <div class="stat-icon success">📋</div>
-        <div class="stat-info">
-          <div class="stat-value">${logs.length}</div>
-          <div class="stat-label">Total Detections</div>
-        </div>
-      </div>`;
-
-    // Donut chart
-    const lowCount = logs.filter(l => l.risk_level === 'LOW').length;
-    const total = logs.length || 1;
-    const circ = 2 * Math.PI * 64;
-    const highPct = highCount / total;
-    const medPct  = medCount  / total;
-    const lowPct  = lowCount  / total;
-
-    document.getElementById('dash-chart').innerHTML = `
-      <div class="donut-chart">
-        <svg viewBox="0 0 160 160">
-          <circle class="donut-bg" />
-          <circle class="donut-low" stroke-dasharray="${lowPct*circ} ${circ}" stroke-dashoffset="0" />
-          <circle class="donut-med" stroke-dasharray="${medPct*circ} ${circ}" stroke-dashoffset="${-lowPct*circ}" />
-          <circle class="donut-high" stroke-dasharray="${highPct*circ} ${circ}" stroke-dashoffset="${-(lowPct+medPct)*circ}" />
-        </svg>
-        <div class="donut-label">
-          <span class="total">${logs.length}</span>
-          <span class="total-text">Total</span>
-        </div>
-      </div>
-      <div class="chart-legend">
-        <div class="legend-item"><span class="legend-dot high"></span> High <span class="legend-count">${highCount}</span></div>
-        <div class="legend-item"><span class="legend-dot medium"></span> Medium <span class="legend-count">${medCount}</span></div>
-        <div class="legend-item"><span class="legend-dot low"></span> Low <span class="legend-count">${lowCount}</span></div>
-      </div>`;
-
-    // Recent table (last 15)
-    const recent = [...logs].reverse().slice(0, 15);
-    document.getElementById('dash-recent').innerHTML = recent.map(l => `
-      <tr class="${riskyRowClass(l.risk_level)}">
-        <td title="${escHtml(l.timestamp)}">${timeAgo(l.timestamp)}</td>
-        <td>${escHtml(l.platform)}</td>
-        <td>${escHtml(l.sender)}</td>
-        <td>${badgeHtml(l.risk_level)}</td>
-      </tr>`).join('');
-  } catch (e) {
-    console.error('Dashboard refresh error:', e);
+  } catch (error) {
+    console.error("Overview refresh error:", error);
   }
 }
 
-// ═════════════════════════════════════════════════════════════════
-//  LIVE PROTECTION
-// ═════════════════════════════════════════════════════════════════
+// ── Live Protection ─────────────────────────────────────────────
 function initProtection() {
-  const el = document.getElementById('page-protection');
-  el.innerHTML = `
+  const page = document.getElementById("page-protection");
+  page.innerHTML = `
     <div class="page-header">
       <h1>Live Protection</h1>
-      <p>Real-time status of R.E.I. protection services</p>
+      <p>Current scanner, monitor, and extension runtime posture.</p>
     </div>
-    <div class="indicator-grid" id="prot-indicators"></div>
-    <div class="mt-24 text-sm text-muted">Auto-refreshing every 3 seconds</div>`;
+    <div class="soc-grid">
+      <div class="soc-card status-card" id="protection-scanner"></div>
+      <div class="soc-card status-card" id="protection-monitor"></div>
+      <div class="soc-card status-card" id="protection-extension"></div>
+    </div>
+  `;
   refreshProtection();
   intervals.protection = setInterval(refreshProtection, 3000);
 }
 
 async function refreshProtection() {
-  if (activePage !== 'protection') return;
+  if (activePage !== "protection") return;
   try {
-    const [scanner, monitor] = await Promise.all([
-      window.rei.scannerStatus(),
-      window.rei.monitorStatus(),
-    ]);
-    // Extension is considered connected if scanner API is up (it relies on the same backend)
-    const extensionUp = scanner.running;
-
-    document.getElementById('prot-indicators').innerHTML = `
-      <div class="indicator-card">
-        <div class="indicator-dot ${scanner.running ? 'green' : 'red'}"></div>
-        <div>
-          <div class="indicator-label">Scanner API</div>
-          <div class="indicator-sub">${scanner.running ? 'Running on port 8000' : 'Unreachable — not responding'}</div>
-        </div>
-      </div>
-      <div class="indicator-card">
-        <div class="indicator-dot ${monitor.running ? 'green' : 'red'}"></div>
-        <div>
-          <div class="indicator-label">File Monitor</div>
-          <div class="indicator-sub">${monitor.running ? 'Watching Downloads folder' : 'Process not running'}</div>
-        </div>
-      </div>
-      <div class="indicator-card">
-        <div class="indicator-dot ${extensionUp ? 'green' : 'red'}"></div>
-        <div>
-          <div class="indicator-label">Extension Connectivity</div>
-          <div class="indicator-sub">${extensionUp ? 'Backend reachable by browser extension' : 'Backend offline — extension disconnected'}</div>
-        </div>
-      </div>`;
-  } catch (e) {
-    console.error('Protection refresh error:', e);
+    const status = await getSystemStatus();
+    renderStatusCard(
+      "protection-scanner",
+      "Scanner Engine",
+      "scanner",
+      statusModel({ online: !!status.scannerUp }),
+      status.scannerUp ? "Running" : "Offline",
+    );
+    renderStatusCard(
+      "protection-monitor",
+      "File Monitor",
+      "monitor",
+      statusModel({ online: !!status.monitorUp }),
+      status.monitorUp ? "Running" : "Offline",
+    );
+    const ext = extensionHealthFromStatus(status);
+    renderStatusCard(
+      "protection-extension",
+      "Extension Connectivity",
+      "extension",
+      { label: ext.label, cls: ext.cls },
+      ext.subtitle,
+    );
+  } catch (error) {
+    console.error("Protection refresh error:", error);
   }
 }
 
-// ═════════════════════════════════════════════════════════════════
-//  THREAT HISTORY
-// ═════════════════════════════════════════════════════════════════
+// ── Threat Timeline ─────────────────────────────────────────────
 let historyLogs = [];
-let historySortCol = 'timestamp';
-let historySortAsc = false;
-let historyFilter = '';
-let historyLevelFilter = 'all';
-
 function initHistory() {
-  const el = document.getElementById('page-history');
-  el.innerHTML = `
+  const page = document.getElementById("page-history");
+  page.innerHTML = `
     <div class="page-header">
-      <h1>Threat History</h1>
-      <p>Complete log of all detected threats</p>
+      <h1>Threat Timeline</h1>
+      <p>Chronological detection records across all channels.</p>
     </div>
-    <div class="filter-bar">
-      <input class="form-input" id="hist-search" placeholder="Search sender, platform, text…" />
-      <select id="hist-level-filter">
-        <option value="all">All Levels</option>
-        <option value="HIGH">High</option>
-        <option value="MEDIUM">Medium</option>
-        <option value="LOW">Low</option>
-      </select>
+    <div class="soc-card">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr><th>Timestamp</th><th>Platform</th><th>Sender</th><th>Score</th><th>Level</th></tr>
+          </thead>
+          <tbody id="history-body"></tbody>
+        </table>
+      </div>
     </div>
-    <div class="table-wrapper" style="max-height:calc(100vh - 260px);overflow-y:auto">
-      <table>
-        <thead>
-          <tr>
-            <th data-col="timestamp">Timestamp <span class="sort-arrow" id="sort-timestamp">▼</span></th>
-            <th data-col="platform">Platform</th>
-            <th data-col="sender">Sender</th>
-            <th data-col="risk_score">Score</th>
-            <th data-col="risk_level">Level</th>
-          </tr>
-        </thead>
-        <tbody id="hist-body"></tbody>
-      </table>
-    </div>`;
-
-  document.getElementById('hist-search').addEventListener('input', e => {
-    historyFilter = e.target.value.toLowerCase();
-    renderHistory();
-  });
-  document.getElementById('hist-level-filter').addEventListener('change', e => {
-    historyLevelFilter = e.target.value;
-    renderHistory();
-  });
-  document.querySelectorAll('#page-history th[data-col]').forEach(th => {
-    th.addEventListener('click', () => {
-      const col = th.dataset.col;
-      if (historySortCol === col) { historySortAsc = !historySortAsc; }
-      else { historySortCol = col; historySortAsc = true; }
-      renderHistory();
-    });
-  });
-
+  `;
   loadHistory();
 }
 
 async function loadHistory() {
   historyLogs = await window.rei.readDetectionLog();
-  renderHistory();
+  const body = document.getElementById("history-body");
+  if (!body) return;
+  const safeLogs = Array.isArray(historyLogs) ? [...historyLogs].reverse() : [];
+  body.innerHTML = safeLogs.slice(0, 200).map((entry) => `
+    <tr class="${levelClass(entry?.risk_level)}">
+      <td>${escHtml(String(entry?.timestamp || "").replace("T", " ").slice(0, 19))}</td>
+      <td>${escHtml(entry?.platform || "")}</td>
+      <td>${escHtml(entry?.sender || "")}</td>
+      <td>${Number(entry?.risk_score || 0).toFixed(4)}</td>
+      <td>${badgeHtml(entry?.risk_level || "LOW")}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="5" class="empty-row">No threat history available.</td></tr>`;
 }
 
-function renderHistory() {
-  let filtered = [...historyLogs];
-
-  if (historyLevelFilter !== 'all') {
-    filtered = filtered.filter(l => l.risk_level === historyLevelFilter);
-  }
-  if (historyFilter) {
-    filtered = filtered.filter(l =>
-      (l.sender || '').toLowerCase().includes(historyFilter) ||
-      (l.platform || '').toLowerCase().includes(historyFilter) ||
-      (l.text || '').toLowerCase().includes(historyFilter)
-    );
-  }
-
-  filtered.sort((a, b) => {
-    let va = a[historySortCol], vb = b[historySortCol];
-    if (typeof va === 'number' && typeof vb === 'number') return historySortAsc ? va - vb : vb - va;
-    va = String(va || '').toLowerCase();
-    vb = String(vb || '').toLowerCase();
-    return historySortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
-  });
-
-  // Update sort arrows
-  document.querySelectorAll('#page-history th .sort-arrow').forEach(el => el.remove());
-  const activeHeader = document.querySelector(`#page-history th[data-col="${historySortCol}"]`);
-  if (activeHeader) {
-    const arrow = document.createElement('span');
-    arrow.className = 'sort-arrow';
-    arrow.textContent = historySortAsc ? ' ▲' : ' ▼';
-    activeHeader.appendChild(arrow);
-  }
-
-  document.getElementById('hist-body').innerHTML = filtered.map(l => `
-    <tr class="${riskyRowClass(l.risk_level)}">
-      <td class="mono text-xs" title="${escHtml(l.timestamp)}">${escHtml(l.timestamp?.replace('T',' ').slice(0,19))}</td>
-      <td>${escHtml(l.platform)}</td>
-      <td title="${escHtml(l.sender)}">${escHtml(l.sender)}</td>
-      <td class="mono">${(l.risk_score || 0).toFixed(4)}</td>
-      <td>${badgeHtml(l.risk_level)}</td>
-    </tr>`).join('');
-}
-
-// ═════════════════════════════════════════════════════════════════
-//  SENDER REPUTATION
-// ═════════════════════════════════════════════════════════════════
+// ── Reputation Intelligence ─────────────────────────────────────
 function initReputation() {
-  const el = document.getElementById('page-reputation');
-  el.innerHTML = `
+  const page = document.getElementById("page-reputation");
+  page.innerHTML = `
     <div class="page-header">
-      <h1>Sender Reputation</h1>
-      <p>Known sender risk profiles based on detection history</p>
+      <h1>Reputation Intelligence</h1>
+      <p>Persistent sender risk memory and escalations.</p>
     </div>
-    <div class="table-wrapper" style="max-height:calc(100vh - 220px);overflow-y:auto">
-      <table>
-        <thead><tr>
-          <th>Sender ID</th>
-          <th>Detection Count</th>
-          <th>Risk Boost</th>
-        </tr></thead>
-        <tbody id="rep-body"></tbody>
-      </table>
+    <div class="soc-card">
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Sender ID</th><th>Detections</th><th>Risk Boost</th></tr></thead>
+          <tbody id="reputation-body"></tbody>
+        </table>
+      </div>
     </div>
-    <div class="mt-16 text-sm text-muted">Auto-refreshing every 10 seconds</div>`;
+  `;
   refreshReputation();
   intervals.reputation = setInterval(refreshReputation, 10000);
 }
 
 async function refreshReputation() {
-  if (activePage !== 'reputation') return;
+  if (activePage !== "reputation") return;
   try {
     const db = await window.rei.readReputationDb();
-    const entries = Object.entries(db).map(([id, v]) => ({ id, count: v.count || 0, risk_boost: v.risk_boost || 0 }));
-    entries.sort((a, b) => b.count - a.count);
-
-    document.getElementById('rep-body').innerHTML = entries.map(e => {
-      const boostClass = e.risk_boost >= 0.4 ? 'danger' : e.risk_boost >= 0.1 ? 'warning' : 'success';
-      return `<tr>
-        <td class="mono">${escHtml(e.id)}</td>
-        <td><strong>${e.count}</strong></td>
-        <td><span class="badge ${boostClass}">${e.risk_boost.toFixed(2)}</span></td>
-      </tr>`;
-    }).join('');
-  } catch (e) {
-    console.error('Reputation refresh error:', e);
+    const rows = Object.entries(db || {})
+      .map(([id, value]) => ({ id, count: Number(value?.count || 0), riskBoost: Number(value?.risk_boost || 0) }))
+      .sort((a, b) => b.count - a.count);
+    const body = document.getElementById("reputation-body");
+    if (!body) return;
+    body.innerHTML = rows.map((row) => `
+      <tr>
+        <td>${escHtml(row.id)}</td>
+        <td>${row.count}</td>
+        <td>${row.riskBoost.toFixed(2)}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="3" class="empty-row">No reputation intelligence entries available.</td></tr>`;
+  } catch (error) {
+    console.error("Reputation refresh error:", error);
   }
 }
 
-// ═════════════════════════════════════════════════════════════════
-//  MANUAL SCAN
-// ═════════════════════════════════════════════════════════════════
-function initScan() {
-  const el = document.getElementById('page-scan');
-  el.innerHTML = `
+// ── Scan Center ─────────────────────────────────────────────────
+function initScanCenter() {
+  const page = document.getElementById("page-scan");
+  page.innerHTML = `
     <div class="page-header">
-      <h1>Manual Scan</h1>
-      <p>Analyze messages, URLs, and files for risk assessment</p>
+      <h1>Scan Center</h1>
+      <p>Manual analysis for message text, URLs, and files.</p>
     </div>
-    <div class="scan-grid">
-      <div class="card">
-        <div class="card-title">Text Analysis</div>
-        <div class="form-group">
-          <label for="scan-text">Message Content</label>
-          <textarea class="form-textarea" id="scan-text" placeholder="Paste suspicious message content here…"></textarea>
-        </div>
-        <button class="btn btn-primary" id="btn-scan-text">🔍 Analyze Text</button>
+    <div class="soc-grid">
+      <div class="soc-card">
+        <div class="card-title">Text Scan</div>
+        <textarea id="scan-text" class="form-textarea" placeholder="Paste suspicious message"></textarea>
+        <button class="btn btn-primary mt-12" id="btn-scan-text">Analyze Text</button>
       </div>
-      <div class="card">
-        <div class="card-title">URL Analysis</div>
-        <div class="form-group">
-          <label for="scan-url">URL</label>
-          <input class="form-input" id="scan-url" placeholder="https://example.com/suspicious-link" />
-        </div>
-        <button class="btn btn-primary" id="btn-scan-url">🔗 Analyze URL</button>
+      <div class="soc-card">
+        <div class="card-title">URL Scan</div>
+        <input id="scan-url" class="form-input" placeholder="https://example.com" />
+        <button class="btn btn-primary mt-12" id="btn-scan-url">Analyze URL</button>
       </div>
     </div>
-    <div class="mt-16">
-      <div class="card">
-        <div class="card-title">File Analysis</div>
-        <p class="text-sm text-muted mb-16">Supported: .txt, .pdf, .docx, .html, .eml</p>
-        <button class="btn btn-file" id="btn-scan-file">📁 Choose File to Scan</button>
-        <div id="scan-file-name" class="mt-8 text-sm text-muted"></div>
-      </div>
+    <div class="soc-card mt-16">
+      <div class="card-title">File Scan</div>
+      <button class="btn btn-outline" id="btn-scan-file">Choose File</button>
+      <div id="scan-file-name" class="muted mt-8"></div>
     </div>
-    <div id="scan-result" class="result-box"></div>`;
+    <div class="soc-card mt-16" id="scan-result-box"></div>
+  `;
 
-  document.getElementById('btn-scan-text').addEventListener('click', scanText);
-  document.getElementById('btn-scan-url').addEventListener('click', scanUrl);
-  document.getElementById('btn-scan-file').addEventListener('click', scanFile);
+  document.getElementById("btn-scan-text").addEventListener("click", scanText);
+  document.getElementById("btn-scan-url").addEventListener("click", scanUrl);
+  document.getElementById("btn-scan-file").addEventListener("click", scanFile);
 }
 
-async function showScanResult(data) {
-  const box = document.getElementById('scan-result');
-  if (!data || data.detail) {
-    box.className = 'result-box visible';
-    box.innerHTML = `<div class="text-muted">❌ Error: ${escHtml(data?.detail || 'Unknown error')}</div>`;
+function showScanResult(result) {
+  const box = document.getElementById("scan-result-box");
+  if (!box) return;
+  if (!result || result.detail) {
+    box.innerHTML = `<div class="error-text">Error: ${escHtml(result?.detail || "Unknown error")}</div>`;
     return;
   }
-  const level = (data.risk_level || 'LOW').toLowerCase();
-  box.className = 'result-box visible';
   box.innerHTML = `
-    <div class="result-score ${level}">${(data.risk_score || 0).toFixed(4)}</div>
-    <div class="result-level">${badgeHtml(data.risk_level)}</div>
-    <ul class="result-explanations">
-      ${(data.explanations || []).map(e => `<li>${escHtml(e)}</li>`).join('')}
-    </ul>`;
+    <div class="scan-result-head">
+      ${badgeHtml(result.risk_level || "LOW")}
+      <span class="scan-score">${Number(result.risk_score || 0).toFixed(4)}</span>
+    </div>
+    <ul class="scan-reasons">
+      ${(result.explanations || []).map((x) => `<li>${escHtml(x)}</li>`).join("")}
+    </ul>
+  `;
 }
 
 async function scanText() {
-  const text = document.getElementById('scan-text').value.trim();
+  const text = document.getElementById("scan-text").value.trim();
   if (!text) return;
-  const btn = document.getElementById('btn-scan-text');
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Analyzing…';
   try {
-    const res = await fetch(`${API_BASE}/analyze-text`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const response = await fetch(`${API_BASE}/analyze-text`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
-    showScanResult(await res.json());
-  } catch (e) {
-    showScanResult({ detail: e.message });
+    showScanResult(await response.json());
+  } catch (error) {
+    showScanResult({ detail: error.message });
   }
-  btn.disabled = false; btn.innerHTML = '🔍 Analyze Text';
 }
 
 async function scanUrl() {
-  const url = document.getElementById('scan-url').value.trim();
+  const url = document.getElementById("scan-url").value.trim();
   if (!url) return;
-  const btn = document.getElementById('btn-scan-url');
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Analyzing…';
   try {
-    const res = await fetch(`${API_BASE}/analyze-url`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const response = await fetch(`${API_BASE}/analyze-url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
     });
-    showScanResult(await res.json());
-  } catch (e) {
-    showScanResult({ detail: e.message });
+    showScanResult(await response.json());
+  } catch (error) {
+    showScanResult({ detail: error.message });
   }
-  btn.disabled = false; btn.innerHTML = '🔗 Analyze URL';
 }
 
 async function scanFile() {
   const filePath = await window.rei.openFileDialog();
   if (!filePath) return;
-  document.getElementById('scan-file-name').textContent = `Selected: ${filePath}`;
-  const btn = document.getElementById('btn-scan-file');
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Uploading & Analyzing…';
+  const fileNameElement = document.getElementById("scan-file-name");
+  if (fileNameElement) fileNameElement.textContent = filePath;
+
   try {
-    // Read file through fetch from local path — we use the Electron IPC-opened dialog
-    // then construct a FormData with the file
     const response = await fetch(filePath);
     const blob = await response.blob();
     const fileName = filePath.split(/[\\/]/).pop();
     const formData = new FormData();
-    formData.append('file', blob, fileName);
-    const res = await fetch(`${API_BASE}/analyze-file`, { method: 'POST', body: formData });
-    showScanResult(await res.json());
-  } catch (e) {
-    showScanResult({ detail: e.message });
+    formData.append("file", blob, fileName);
+    const analyzeResponse = await fetch(`${API_BASE}/analyze-file`, { method: "POST", body: formData });
+    showScanResult(await analyzeResponse.json());
+  } catch (error) {
+    showScanResult({ detail: error.message });
   }
-  btn.disabled = false; btn.innerHTML = '📁 Choose File to Scan';
 }
 
-// ═════════════════════════════════════════════════════════════════
-//  SYSTEM STATUS
-// ═════════════════════════════════════════════════════════════════
-function initStatus() {
-  const el = document.getElementById('page-status');
-  el.innerHTML = `
+// ── Reports ─────────────────────────────────────────────────────
+function initReports() {
+  const page = document.getElementById("page-reports");
+  page.innerHTML = `
     <div class="page-header">
-      <h1>System Status</h1>
-      <p>Infrastructure health check for all R.E.I. components</p>
+      <h1>Reports</h1>
+      <p>Operational service readiness and data store integrity.</p>
     </div>
-    <div class="indicator-grid" id="sys-indicators"></div>
-    <div class="mt-16">
-      <button class="btn btn-outline" id="btn-refresh-status">🔄 Refresh Now</button>
-    </div>`;
-  document.getElementById('btn-refresh-status').addEventListener('click', refreshStatus);
-  refreshStatus();
+    <div class="soc-grid">
+      <div class="soc-card status-card" id="reports-scanner"></div>
+      <div class="soc-card status-card" id="reports-monitor"></div>
+      <div class="soc-card status-card" id="reports-extension"></div>
+      <div class="soc-card status-card" id="reports-stores"></div>
+    </div>
+  `;
+  refreshReports();
+  intervals.reports = setInterval(refreshReports, 5000);
 }
 
-async function refreshStatus() {
+async function refreshReports() {
+  if (activePage !== "reports") return;
   try {
-    const st = await window.rei.systemStatus();
-    document.getElementById('sys-indicators').innerHTML = `
-      <div class="indicator-card">
-        <div class="indicator-dot ${st.scannerUp ? 'green' : 'red'}"></div>
-        <div>
-          <div class="indicator-label">Scanner API</div>
-          <div class="indicator-sub">${st.scannerUp ? 'Reachable at http://127.0.0.1:8000' : 'Not reachable'}</div>
-        </div>
-      </div>
-      <div class="indicator-card">
-        <div class="indicator-dot ${st.monitorUp ? 'green' : 'red'}"></div>
-        <div>
-          <div class="indicator-label">File Monitor Process</div>
-          <div class="indicator-sub">${st.monitorUp ? 'Running' : 'Not running'}</div>
-        </div>
-      </div>
-      <div class="indicator-card">
-        <div class="indicator-dot ${st.detLogExists ? 'green' : 'red'}"></div>
-        <div>
-          <div class="indicator-label">detection_log.json</div>
-          <div class="indicator-sub">${st.detLogExists ? 'Present' : 'Missing'}</div>
-        </div>
-      </div>
-      <div class="indicator-card">
-        <div class="indicator-dot ${st.repDbExists ? 'green' : 'red'}"></div>
-        <div>
-          <div class="indicator-label">reputation_db.json</div>
-          <div class="indicator-sub">${st.repDbExists ? 'Present' : 'Missing'}</div>
-        </div>
-      </div>`;
-  } catch (e) {
-    console.error('Status refresh error:', e);
+    const status = await getSystemStatus();
+    renderStatusCard("reports-scanner", "Scanner API", "scanner", statusModel({ online: !!status.scannerUp }), "Port 8000 health");
+    renderStatusCard("reports-monitor", "File Monitor", "monitor", statusModel({ online: !!status.monitorUp }), "Process/watchdog status");
+    const ext = extensionHealthFromStatus(status);
+    renderStatusCard("reports-extension", "Extension", "extension", { label: ext.label, cls: ext.cls }, ext.subtitle);
+    renderStatusCard(
+      "reports-stores",
+      "JSON Data Stores",
+      "stores",
+      statusModel({ online: !!status.detLogExists && !!status.repDbExists, degraded: !!status.detLogExists || !!status.repDbExists }),
+      `${status.detLogExists ? "detection_log.json" : "missing detection_log"} | ${status.repDbExists ? "reputation_db.json" : "missing reputation_db"}`,
+    );
+  } catch (error) {
+    console.error("Reports refresh error:", error);
   }
 }
 
-// ═════════════════════════════════════════════════════════════════
-//  SETTINGS
-// ═════════════════════════════════════════════════════════════════
+// ── Settings ────────────────────────────────────────────────────
 function initSettings() {
-  const el = document.getElementById('page-settings');
-  el.innerHTML = `
+  const page = document.getElementById("page-settings");
+  page.innerHTML = `
     <div class="page-header">
       <h1>Settings</h1>
-      <p>Configure R.E.I. system preferences</p>
+      <p>Runtime controls for scanner integrations.</p>
     </div>
-    <div class="two-col">
-      <div class="card">
-        <div class="card-title">API Configuration</div>
-        <div class="form-group">
-          <label for="set-vt-key">VirusTotal API Key</label>
-          <input class="form-input mono" id="set-vt-key" type="password" placeholder="Enter your VirusTotal API key" />
-        </div>
-        <button class="btn btn-primary" id="btn-save-settings">💾 Save Settings</button>
-        <div id="settings-msg" class="mt-8 text-sm"></div>
+    <div class="soc-card">
+      <div class="form-group">
+        <label for="set-vt-key">VirusTotal API Key</label>
+        <input id="set-vt-key" class="form-input" type="password" />
       </div>
-      <div class="card">
-        <div class="card-title">Protection Toggles</div>
-        <div class="toggle-group">
-          <div>
-            <div class="toggle-label">URL Scanning</div>
-            <div class="toggle-desc">Analyze URLs in messages for phishing domains</div>
-          </div>
-          <label class="toggle-switch">
-            <input type="checkbox" id="tog-url" />
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-        <div class="toggle-group">
-          <div>
-            <div class="toggle-label">File Scanning</div>
-            <div class="toggle-desc">Automatically scan downloaded files</div>
-          </div>
-          <label class="toggle-switch">
-            <input type="checkbox" id="tog-file" />
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-        <div class="toggle-group">
-          <div>
-            <div class="toggle-label">Reputation Tracking</div>
-            <div class="toggle-desc">Track sender risk history across detections</div>
-          </div>
-          <label class="toggle-switch">
-            <input type="checkbox" id="tog-rep" />
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
+      <div class="toggle-grid">
+        <label class="toggle-item"><span>URL Scanning</span><input type="checkbox" id="tog-url" /></label>
+        <label class="toggle-item"><span>File Scanning</span><input type="checkbox" id="tog-file" /></label>
+        <label class="toggle-item"><span>Reputation Tracking</span><input type="checkbox" id="tog-rep" /></label>
       </div>
-    </div>`;
-
+      <button class="btn btn-primary mt-12" id="btn-save-settings">Save Settings</button>
+      <div id="settings-msg" class="muted mt-8"></div>
+    </div>
+  `;
   loadSettings();
-
-  document.getElementById('btn-save-settings').addEventListener('click', saveSettings);
+  document.getElementById("btn-save-settings").addEventListener("click", saveSettings);
 }
 
 async function loadSettings() {
   try {
-    const s = await window.rei.getSettings();
-    document.getElementById('set-vt-key').value = s.virustotalApiKey || '';
-    document.getElementById('tog-url').checked  = s.enableUrlScanning !== false;
-    document.getElementById('tog-file').checked  = s.enableFileScanning !== false;
-    document.getElementById('tog-rep').checked   = s.enableReputationTracking !== false;
-  } catch (e) {
-    console.error('Load settings error:', e);
+    const settings = await window.rei.getSettings();
+    document.getElementById("set-vt-key").value = settings.virustotalApiKey || "";
+    document.getElementById("tog-url").checked = settings.enableUrlScanning !== false;
+    document.getElementById("tog-file").checked = settings.enableFileScanning !== false;
+    document.getElementById("tog-rep").checked = settings.enableReputationTracking !== false;
+  } catch (error) {
+    console.error("Load settings error:", error);
   }
 }
 
 async function saveSettings() {
-  const data = {
-    virustotalApiKey: document.getElementById('set-vt-key').value,
-    enableUrlScanning: document.getElementById('tog-url').checked,
-    enableFileScanning: document.getElementById('tog-file').checked,
-    enableReputationTracking: document.getElementById('tog-rep').checked,
+  const payload = {
+    virustotalApiKey: document.getElementById("set-vt-key").value,
+    enableUrlScanning: document.getElementById("tog-url").checked,
+    enableFileScanning: document.getElementById("tog-file").checked,
+    enableReputationTracking: document.getElementById("tog-rep").checked,
   };
   try {
-    await window.rei.saveSettings(data);
-    const msg = document.getElementById('settings-msg');
-    msg.style.color = 'var(--success)';
-    msg.textContent = '✓ Settings saved successfully';
-    setTimeout(() => msg.textContent = '', 3000);
-  } catch (e) {
-    const msg = document.getElementById('settings-msg');
-    msg.style.color = 'var(--danger)';
-    msg.textContent = '✗ Failed to save settings';
+    await window.rei.saveSettings(payload);
+    document.getElementById("settings-msg").textContent = "Settings saved";
+  } catch (_error) {
+    document.getElementById("settings-msg").textContent = "Failed to save settings";
   }
 }
 
-// ── Boot ─────────────────────────────────────────────────────────
+// ── Boot ────────────────────────────────────────────────────────
 if (typeof document !== "undefined" && document.getElementById) {
-  initPage('dashboard');
+  if (window.rei && typeof window.rei.onStatusUpdate === "function") {
+    window.rei.onStatusUpdate((payload) => {
+      latestSystemStatus = payload;
+      if (activePage === "dashboard") refreshOverview();
+      if (activePage === "protection") refreshProtection();
+      if (activePage === "reports") refreshReports();
+      updateHeaderStatus();
+    });
+  }
+  startHeaderServices();
+  initPage("dashboard");
 }
 
 // ── Testable factories ──────────────────────────────────────────
-
-function createRouter(pages) {
+function createRouter(routePages) {
   let currentPage = null;
   let currentLifecycle = null;
 
   return {
     async navigate(name) {
-      // Unmount previous page
-      if (currentPage && pages[currentPage]) {
-        if (typeof pages[currentPage].unmount === "function") {
-          pages[currentPage].unmount();
+      if (currentPage && routePages[currentPage]) {
+        if (typeof routePages[currentPage].unmount === "function") {
+          routePages[currentPage].unmount();
         }
-        // Destroy lifecycle cleanups
         if (currentLifecycle) {
           currentLifecycle._runCleanups();
           currentLifecycle = null;
@@ -685,13 +869,11 @@ function createRouter(pages) {
       }
 
       currentPage = name;
-
-      // Mount new page
-      if (pages[name]) {
+      if (routePages[name]) {
         const lifecycle = createLifecycle();
         currentLifecycle = lifecycle;
-        if (typeof pages[name].mount === "function") {
-          await pages[name].mount({ lifecycle });
+        if (typeof routePages[name].mount === "function") {
+          await routePages[name].mount({ lifecycle });
         }
       }
     },
@@ -736,7 +918,6 @@ function createStateBus() {
   };
 }
 
-// ── Module exports (for testing) ────────────────────────────────
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { createRouter, createStateBus };
 }

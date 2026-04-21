@@ -10,7 +10,7 @@ const manifestPath = path.resolve(__dirname, "../../extension/extension/manifest
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
 test("manifest name/description/version are correct", () => {
-  assert.equal(manifest.name, "R.E.I. Risk Evaluation Intelligence");
+  assert.equal(manifest.name, "__MSG_extension_name__");
   assert.equal(
     manifest.description,
     "Offline multi-channel scam detection and website risk intelligence assistant powered by local AI and VirusTotal URL analysis.",
@@ -25,4 +25,9 @@ test("manifest permissions and hosts include required values", () => {
   for (const hostPermission of ["https://www.virustotal.com/*", "http://127.0.0.1:8000/*", "<all_urls>"]) {
     assert.ok(manifest.host_permissions.includes(hostPermission));
   }
+});
+
+test("manifest uses chrome i18n extension name and default locale", () => {
+  assert.equal(manifest.default_locale, "en");
+  assert.equal(manifest.name, "__MSG_extension_name__");
 });

@@ -10,6 +10,8 @@ const {
   shouldIgnoreUrlForScan,
   shouldSkipDueToCooldown,
   buildVirusTotalSubmitRequest,
+  normalizeApiResponse,
+  buildLatestUrlScanResult,
 } = require("../../extension/extension/scripts/background.js");
 
 test("computeUrlRiskLevel returns HIGH when malicious > 0", () => {
@@ -97,4 +99,36 @@ test("computeCombinedUrlScanResult merges VT stats with local scanner risk", () 
   assert.equal(result.malicious_count, 0);
   assert.equal(result.suspicious_count, 1);
   assert.equal(result.harmless_count, 12);
+});
+
+test("normalizeApiResponse maps score below 0.55 to LOW", () => {
+  const result = normalizeApiResponse({ risk_score: 0.54, risk_level: "HIGH", explanations: [] });
+  assert.equal(result.risk_level, "LOW");
+});
+
+test("normalizeApiResponse maps score >= 0.55 and < 0.75 to MEDIUM", () => {
+  const result = normalizeApiResponse({ risk_score: 0.60, risk_level: "LOW", explanations: [] });
+  assert.equal(result.risk_level, "MEDIUM");
+});
+
+test("normalizeApiResponse maps score >= 0.75 to HIGH", () => {
+  const result = normalizeApiResponse({ risk_score: 0.80, risk_level: "LOW", explanations: [] });
+  assert.equal(result.risk_level, "HIGH");
+});
+
+test("buildLatestUrlScanResult stores VT and local model score fields", () => {
+  const entry = buildLatestUrlScanResult({
+    url: "https://x.test",
+    vtStats: { malicious: 2, suspicious: 1, harmless: 5 },
+    localModelScore: 0.78,
+    combinedRiskLevel: "HIGH",
+    virustotalRiskLevel: "HIGH",
+    localRiskLevel: "HIGH",
+  });
+  assert.equal(entry.url, "https://x.test");
+  assert.equal(entry.vt_malicious, 2);
+  assert.equal(entry.vt_suspicious, 1);
+  assert.equal(entry.vt_harmless, 5);
+  assert.equal(entry.local_model_score, 0.78);
+  assert.equal(entry.combined_risk_level, "HIGH");
 });

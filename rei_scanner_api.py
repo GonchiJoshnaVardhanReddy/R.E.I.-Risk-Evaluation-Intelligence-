@@ -251,14 +251,20 @@ def log_detection(
     risk_level: str,
     explanations: list[str],
 ) -> None:
+    event_timestamp = datetime.now(timezone.utc).isoformat()
+    metadata: dict[str, Any] = {}
+    if (platform or "").lower() in {"whatsapp", "email"}:
+        metadata["last_extension_activity"] = event_timestamp
+
     log_entry = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": event_timestamp,
         "text": text,
         "sender": sender or "",
         "platform": platform or "",
         "risk_score": round(risk_score, 4),
         "risk_level": risk_level,
         "explanations": explanations,
+        "metadata": metadata,
     }
     with JSON_LOCK:
         raw_logs = _safe_read_json(DETECTION_LOG_PATH, [])

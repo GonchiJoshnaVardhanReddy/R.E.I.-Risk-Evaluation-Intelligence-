@@ -12,6 +12,9 @@ const MAX_REQUEST_ATTEMPTS = 2;
 const VT_SCAN_COOLDOWN_MS = 20_000;
 const VT_ANALYSIS_POLL_ATTEMPTS = 4;
 const VT_ANALYSIS_POLL_DELAY_MS = 2500;
+const MEDIUM_WARNING_THRESHOLD = 0.55;
+const HIGH_WARNING_THRESHOLD = 0.75;
+const REI_DEBUG = true;
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -53,6 +56,13 @@ function combineRiskLevels(virustotalRiskLevel, localRiskLevel) {
   return "LOW";
 }
 
+function mapRiskLevelFromScore(score) {
+  const normalizedScore = Number.isFinite(Number(score)) ? Number(score) : 0;
+  if (normalizedScore >= HIGH_WARNING_THRESHOLD) return "HIGH";
+  if (normalizedScore >= MEDIUM_WARNING_THRESHOLD) return "MEDIUM";
+  return "LOW";
+}
+
 function computeCombinedUrlScanResult({ url, vtStats, localRiskLevel }) {
   const malicious = Number(vtStats?.malicious || 0);
   const suspicious = Number(vtStats?.suspicious || 0);
@@ -73,6 +83,40 @@ function computeCombinedUrlScanResult({ url, vtStats, localRiskLevel }) {
     harmless_count: harmless,
     virustotal_risk_level: virustotalRiskLevel,
     local_risk_level: normalizedLocalRisk,
+  };
+}
+
+function buildLatestUrlScanResult({
+  url,
+  vtStats,
+  localModelScore,
+  combinedRiskLevel,
+  virustotalRiskLevel,
+  localRiskLevel,
+}) {
+  const malicious = Number(vtStats?.malicious || 0);
+  const suspicious = Number(vtStats?.suspicious || 0);
+  const harmless = Number(vtStats?.harmless || 0);
+  const scoreValue = Number.isFinite(Number(localModelScore)) ? Number(localModelScore) : 0;
+  const roundedLocalScore = Math.max(0, Math.min(1, scoreValue));
+
+  return {
+    url,
+    vt_malicious: malicious,
+    vt_suspicious: suspicious,
+    vt_harmless: harmless,
+    local_model_score: Number(roundedLocalScore.toFixed(4)),
+    combined_risk_level: normalizeRiskLevel(combinedRiskLevel),
+    risk_level: normalizeRiskLevel(combinedRiskLevel),
+    malicious_count: malicious,
+    suspicious_count: suspicious,
+    harmless_count: harmless,
+    virustotal_risk_level: normalizeRiskLevel(virustotalRiskLevel),
+    local_risk_level: normalizeRiskLevel(localRiskLevel),
+    sources: {
+      virustotal: normalizeRiskLevel(virustotalRiskLevel),
+      rei_local_model: normalizeRiskLevel(localRiskLevel),
+    },
   };
 }
 
@@ -117,7 +161,7 @@ async function pollAnalysisResult(analysisId, apiKey) {
 
 // ── Local URL analysis ──────────────────────────────────────────
 
-async function fetchLocalUrlRiskLevel(url) {
+async function fetchLocalUrlResult(url) {
   try {
     const response = await fetch(URL_ANALYZE_API_URL, {
       method: "POST",
@@ -128,10 +172,15 @@ async function fetchLocalUrlRiskLevel(url) {
       throw new Error(`local URL analysis failed: ${response.status}`);
     }
     const data = await response.json();
-    return normalizeRiskLevel(data?.risk_level);
+    const score = typeof data?.risk_score === "number" ? Math.max(0, Math.min(1, data.risk_score)) : 0;
+    const levelFromApi = normalizeRiskLevel(data?.risk_level);
+    return {
+      riskLevel: levelFromApi !== "LOW" || score < MEDIUM_WARNING_THRESHOLD ? levelFromApi : mapRiskLevelFromScore(score),
+      riskScore: score,
+    };
   } catch (_error) {
     console.warn("Local scanner unavailable");
-    return "LOW";
+    return { riskLevel: "LOW", riskScore: 0 };
   }
 }
 
@@ -152,20 +201,33 @@ async function runVirusTotalScanForTab(tabId, url, apiKey) {
 
     const analysis = await pollAnalysisResult(analysisId, apiKey);
     const stats = getStatsFromAnalysisPayload(analysis);
-    const localRiskLevel = await fetchLocalUrlRiskLevel(url);
+    const localResult = await fetchLocalUrlResult(url);
     const combinedResult = computeCombinedUrlScanResult({
       url,
       vtStats: stats,
-      localRiskLevel,
+      localRiskLevel: localResult.riskLevel,
+    });
+    const storageEntry = buildLatestUrlScanResult({
+      url,
+      vtStats: stats,
+      localModelScore: localResult.riskScore,
+      combinedRiskLevel: combinedResult.risk_level,
+      virustotalRiskLevel: combinedResult.virustotal_risk_level,
+      localRiskLevel: combinedResult.local_risk_level,
     });
 
     await chrome.storage.local.set({
-      latest_url_scan_result: combinedResult,
+      latest_url_scan_result: storageEntry,
     });
 
-    console.log("REI Scan Result:", combinedResult);
+    console.log("REI Scan Result:", storageEntry);
 
     if (combinedResult.risk_level === "HIGH") {
+      const { rei_user_override_url: overrideUrl } = await chrome.storage.local.get(["rei_user_override_url"]);
+      if (overrideUrl && overrideUrl === url) {
+        await chrome.storage.local.remove(["rei_user_override_url"]);
+        return true;
+      }
       chrome.tabs.update(tabId, {
         url: chrome.runtime.getURL(`blocked.html?url=${encodeURIComponent(url)}`),
       });
@@ -255,9 +317,7 @@ function normalizeApiResponse(data) {
       ? data.score / 100
       : 0;
   const risk_score = Math.max(0, Math.min(1, scoreFromApi));
-
-  const level = typeof data?.risk_level === "string" ? data.risk_level.toUpperCase() : "LOW";
-  const risk_level = ["LOW", "MEDIUM", "HIGH"].includes(level) ? level : "LOW";
+  const risk_level = mapRiskLevelFromScore(risk_score);
 
   return {
     risk_score,
@@ -266,6 +326,16 @@ function normalizeApiResponse(data) {
     score: Math.round(risk_score * 100),
     reasons: explanations.length ? explanations : ["No immediate red flags detected"],
   };
+}
+
+function logDebugScanEvent({ sender, riskScore, riskLevel, platform }) {
+  if (!REI_DEBUG) return;
+  console.log("[REI_DEBUG] scan_event", {
+    sender: sender || "unknown_sender",
+    risk_score: riskScore,
+    risk_level: riskLevel,
+    platform: platform || "unknown",
+  });
 }
 
 function storeScanHistory(text, sender, platform, result) {
@@ -313,6 +383,12 @@ async function analyzeMessage(text, sender, platform) {
 
       const data = await response.json();
       const normalizedResult = normalizeApiResponse(data);
+      logDebugScanEvent({
+        sender: payload.sender,
+        riskScore: normalizedResult.risk_score,
+        riskLevel: normalizedResult.risk_level,
+        platform: payload.platform,
+      });
       console.log("REI Scan Result:", normalizedResult);
       storeScanHistory(text, payload.sender, payload.platform, normalizedResult);
       return normalizedResult;
@@ -354,9 +430,12 @@ if (typeof module !== "undefined" && module.exports) {
     computeUrlRiskLevel,
     combineRiskLevels,
     computeCombinedUrlScanResult,
+    buildLatestUrlScanResult,
     shouldIgnoreUrlForScan,
     shouldSkipDueToCooldown,
     buildVirusTotalSubmitRequest,
+    normalizeApiResponse,
+    mapRiskLevelFromScore,
     VT_SCAN_COOLDOWN_MS,
   };
 }

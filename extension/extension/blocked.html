@@ -232,47 +232,27 @@
         <span class="attr-label">R.E.I. Local Model</span>
         <span class="attr-badge" id="attr-local">—</span>
       </div>
+      <div class="attr-row">
+        <span class="attr-label">VirusTotal Malicious Count</span>
+        <span class="attr-badge" id="attr-vt-malicious">0</span>
+      </div>
+      <div class="attr-row">
+        <span class="attr-label">VirusTotal Suspicious Count</span>
+        <span class="attr-badge" id="attr-vt-suspicious">0</span>
+      </div>
+      <div class="attr-row">
+        <span class="attr-label">Local Model Score</span>
+        <span class="attr-badge" id="attr-local-score">0.00</span>
+      </div>
     </div>
 
     <div class="actions">
-      <button class="btn btn-back" onclick="window.history.back()">← Go Back Safely</button>
+      <button class="btn btn-back" id="go-back-btn">← Go Back Safely</button>
       <button class="btn btn-proceed" id="proceed-btn">Proceed Anyway (Unsafe)</button>
     </div>
 
     <div class="brand">R.E.I. RISK EVALUATION INTELLIGENCE</div>
   </div>
-
-  <script>
-    const urlParams = new URLSearchParams(window.location.search);
-    const blockedUrl = urlParams.get("url") || "Unknown URL";
-
-    document.getElementById("target-url").textContent = blockedUrl;
-
-    // Load source attribution from storage
-    if (typeof chrome !== "undefined" && chrome.storage?.local) {
-      chrome.storage.local.get(["latest_url_scan_result"], (result) => {
-        const data = result.latest_url_scan_result;
-        if (!data) return;
-
-        const setBadge = (id, level) => {
-          const el = document.getElementById(id);
-          if (!el) return;
-          const l = (level || "LOW").toUpperCase();
-          el.textContent = l;
-          el.className = `attr-badge ${l.toLowerCase()}`;
-        };
-
-        setBadge("attr-combined", data.risk_level);
-        setBadge("attr-vt", data.virustotal_risk_level || data.sources?.virustotal);
-        setBadge("attr-local", data.local_risk_level || data.sources?.rei_local_model);
-      });
-    }
-
-    document.getElementById("proceed-btn").onclick = () => {
-      if (confirm("⚠ This site was flagged as HIGH risk. Are you sure you want to proceed?")) {
-        window.location.href = blockedUrl;
-      }
-    };
-  </script>
+  <script src="scripts/blocked.js"></script>
 </body>
 </html>

@@ -32,17 +32,24 @@ class ConsoleNotifier:
 
 
 def extract_txt_text(file_path: Path) -> str:
-    try:
-        extracted = file_path.read_text(encoding="utf-8", errors="ignore").strip()
-    except OSError as exc:
-        print(f"[REI] TXT extraction failed ({file_path.name}): {exc}")
-        return ""
+    encodings = ["utf-8", "utf-16", "latin-1"]
+    last_error: Exception | None = None
 
-    if extracted:
-        print(f"[REI] TXT extraction successful ({file_path.name})")
+    for encoding in encodings:
+        try:
+            extracted = file_path.read_text(encoding=encoding, errors="ignore").strip()
+        except Exception as exc:
+            last_error = exc
+            continue
+        if extracted:
+            print(f"[REI] TXT extraction successful using {encoding}: {file_path.name}")
+            return extracted
+
+    if last_error is not None:
+        print(f"[REI] TXT extraction failed ({file_path.name}): {last_error}")
     else:
         print(f"[REI] TXT extraction produced empty text ({file_path.name})")
-    return extracted
+    return ""
 
 
 def extract_pdf_text(file_path: Path) -> str:

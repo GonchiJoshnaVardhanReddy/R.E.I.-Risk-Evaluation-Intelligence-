@@ -1,0 +1,18 @@
+<!-- Sender Reputation page content — rendered dynamically by renderer.js -->
+<div class="page-header">
+  <h1>Sender Reputation</h1>
+  <p>Known sender risk profiles based on detection history</p>
+</div>
+<div class="table-wrapper" style="max-height:calc(100vh - 220px);overflow-y:auto">
+  <table>
+    <thead>
+      <tr>
+        <th>Sender ID</th>
+        <th>Detection Count</th>
+        <th>Risk Boost</th>
+      </tr>
+    </thead>
+    <tbody id="rep-body"></tbody>
+  </table>
+</div>
+<div class="mt-16 text-sm text-muted">Auto-refreshing every 10 seconds</div>

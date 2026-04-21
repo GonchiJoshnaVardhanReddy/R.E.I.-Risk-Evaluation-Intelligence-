@@ -1,0 +1,32 @@
+<!-- Manual Scan page content — rendered dynamically by renderer.js -->
+<div class="page-header">
+  <h1>Manual Scan</h1>
+  <p>Analyze messages, URLs, and files for risk assessment</p>
+</div>
+<div class="scan-grid">
+  <div class="card">
+    <div class="card-title">Text Analysis</div>
+    <div class="form-group">
+      <label for="scan-text">Message Content</label>
+      <textarea class="form-textarea" id="scan-text" placeholder="Paste suspicious message content here…"></textarea>
+    </div>
+    <button class="btn btn-primary" id="btn-scan-text">🔍 Analyze Text</button>
+  </div>
+  <div class="card">
+    <div class="card-title">URL Analysis</div>
+    <div class="form-group">
+      <label for="scan-url">URL</label>
+      <input class="form-input" id="scan-url" placeholder="https://example.com/suspicious-link" />
+    </div>
+    <button class="btn btn-primary" id="btn-scan-url">🔗 Analyze URL</button>
+  </div>
+</div>
+<div class="mt-16">
+  <div class="card">
+    <div class="card-title">File Analysis</div>
+    <p class="text-sm text-muted mb-16">Supported: .txt, .pdf, .docx, .html, .eml</p>
+    <button class="btn btn-file" id="btn-scan-file">📁 Choose File to Scan</button>
+    <div id="scan-file-name" class="mt-8 text-sm text-muted"></div>
+  </div>
+</div>
+<div id="scan-result" class="result-box"></div>

@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "REI Email Protector",
+  "version": "1.0.0",
+  "description": "Detects suspicious emails in Gmail and Outlook using local R.E.I. analysis API.",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "https://mail.google.com/*",
+    "https://outlook.live.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://mail.google.com/*",
+        "https://outlook.live.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

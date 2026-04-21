@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "REI WhatsApp Protector",
+  "version": "1.0.0",
+  "description": "Scans incoming WhatsApp Web messages with the local R.E.I. API and shows scam warnings.",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "https://web.whatsapp.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

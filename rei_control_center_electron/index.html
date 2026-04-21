@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>R.E.I. Control Center</title>
+  <meta name="description" content="Risk Evaluation Intelligence — Desktop Control Center" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div id="app-wrapper">
+
+    <!-- ═══ Sidebar ═══ -->
+    <aside id="sidebar">
+      <div id="sidebar-logo">
+        <div class="logo-icon">R</div>
+        <div class="logo-text">
+          <span class="title">R.E.I.</span>
+          <span class="subtitle">Control Center</span>
+        </div>
+      </div>
+
+      <nav id="sidebar-nav">
+        <div class="nav-item active" data-page="dashboard">
+          <span class="nav-icon">📊</span>
+          <span>Dashboard</span>
+        </div>
+        <div class="nav-item" data-page="protection">
+          <span class="nav-icon">🛡️</span>
+          <span>Live Protection</span>
+        </div>
+        <div class="nav-item" data-page="history">
+          <span class="nav-icon">📜</span>
+          <span>Threat History</span>
+        </div>
+        <div class="nav-item" data-page="reputation">
+          <span class="nav-icon">👤</span>
+          <span>Sender Reputation</span>
+        </div>
+        <div class="nav-item" data-page="scan">
+          <span class="nav-icon">🔍</span>
+          <span>Manual Scan</span>
+        </div>
+        <div class="nav-item" data-page="status">
+          <span class="nav-icon">⚙️</span>
+          <span>System Status</span>
+        </div>
+        <div class="nav-item" data-page="settings">
+          <span class="nav-icon">🔧</span>
+          <span>Settings</span>
+        </div>
+      </nav>
+
+      <div id="sidebar-footer">
+        <div class="version">R.E.I. v2.0.0</div>
+      </div>
+    </aside>
+
+    <!-- ═══ Main Content ═══ -->
+    <main id="main-content">
+
+      <!-- ── Dashboard ─────────────────────────────── -->
+      <section class="page active" id="page-dashboard"></section>
+
+      <!-- ── Live Protection ───────────────────────── -->
+      <section class="page" id="page-protection"></section>
+
+      <!-- ── Threat History ────────────────────────── -->
+      <section class="page" id="page-history"></section>
+
+      <!-- ── Sender Reputation ─────────────────────── -->
+      <section class="page" id="page-reputation"></section>
+
+      <!-- ── Manual Scan ───────────────────────────── -->
+      <section class="page" id="page-scan"></section>
+
+      <!-- ── System Status ─────────────────────────── -->
+      <section class="page" id="page-status"></section>
+
+      <!-- ── Settings ──────────────────────────────── -->
+      <section class="page" id="page-settings"></section>
+
+    </main>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+{
+  "name": "rei-control-center-electron",
+  "version": "2.0.0",
+  "description": "R.E.I. Control Center — Risk Evaluation Intelligence Desktop GUI",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.mjs",
+    "build": "electron-builder --win"
+  },
+  "dependencies": {
+    "electron-store": "^10.0.1"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.rei.controlcenter",
+    "productName": "REI_Control_Center",
+    "files": [
+      "**/*",
+      "!tests/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../rei_scanner_api.py",
+        "to": "backend/rei_scanner_api.py"
+      },
+      {
+        "from": "../file_monitor.py",
+        "to": "backend/file_monitor.py"
+      },
+      {
+        "from": "../rei_model",
+        "to": "backend/rei_model"
+      },
+      {
+        "from": "../detection_log.json",
+        "to": "backend/detection_log.json"
+      },
+      {
+        "from": "../reputation_db.json",
+        "to": "backend/reputation_db.json"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "REI_Control_Center.exe"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+<!-- Dashboard page content — rendered dynamically by renderer.js -->
+<div class="page-header">
+  <h1>Dashboard</h1>
+  <p>Real-time threat intelligence overview</p>
+</div>
+<div id="dash-banner"></div>
+<div class="stats-grid" id="dash-stats"></div>
+<div class="two-col">
+  <div class="card">
+    <div class="card-title">Risk Distribution</div>
+    <div class="chart-container" id="dash-chart"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Recent Detections</div>
+    <div class="table-wrapper" style="max-height:340px;overflow-y:auto">
+      <table>
+        <thead><tr><th>Time</th><th>Platform</th><th>Sender</th><th>Risk</th></tr></thead>
+        <tbody id="dash-recent"></tbody>
+      </table>
+    </div>
+  </div>
+</div>

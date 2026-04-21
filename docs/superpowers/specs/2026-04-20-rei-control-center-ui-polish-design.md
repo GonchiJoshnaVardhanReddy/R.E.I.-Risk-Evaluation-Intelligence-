@@ -76,13 +76,13 @@ Use a centralized app-wide stylesheet with design tokens (color, typography, spa
 
 ## Data/Behavior Safety
 - No changes to:
-  - subprocess lifecycle
   - API request flow
   - timers/refresh cadence
-  - file parsing logic
-  - restart/close behavior
+  - restart behavior (except external-process safety on close)
 - UI updates must be appearance-only.
 - The banner and threat summary counters are display-only and reuse existing state/data flows.
+- Defensive parsing is allowed only to prevent UI refresh crashes on malformed local JSON rows.
+- Service lifecycle safety exception (approved): closing the control center must not stop externally managed scanner/file-monitor processes.
 
 ## Error Handling
 - Existing warning dialogs and logging remain unchanged.
@@ -98,5 +98,5 @@ Use a centralized app-wide stylesheet with design tokens (color, typography, spa
 7. Verify manual scan buttons and restart buttons remain fully functional.
 
 ## Implementation Notes
-- Keep edits isolated to `rei_control_center.py`.
+- Keep application behavior edits isolated to `rei_control_center.py`; adding focused tests under `tests/` is allowed.
 - Use a single source of style truth to simplify future refinements.

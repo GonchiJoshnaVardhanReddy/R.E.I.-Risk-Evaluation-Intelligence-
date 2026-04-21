@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>R.E.I. Control Panel</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles/popup.css" />
+</head>
+<body>
+  <div class="container">
+
+    <!-- ═══ Header ═══ -->
+    <header>
+      <div class="logo-section">
+        <div class="logo-icon">R</div>
+        <div class="logo-text">
+          <span class="logo-title">R.E.I.</span>
+          <span class="logo-sub">Risk Evaluation Intelligence</span>
+        </div>
+      </div>
+      <div class="status-badge" id="service-status">
+        <span class="pulse"></span>
+        <span id="status-text">CHECKING…</span>
+      </div>
+    </header>
+
+    <!-- ═══ Tabs ═══ -->
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="status">Dashboard</button>
+      <button class="tab-btn" data-tab="url-scan">URL Scan</button>
+      <button class="tab-btn" data-tab="settings">Settings</button>
+    </nav>
+
+    <!-- ═══ Dashboard Tab ═══ -->
+    <main id="tab-status">
+      <div class="hero-card">
+        <div class="hero-content">
+          <span class="label">PROTECTION STATUS</span>
+          <h2 id="hero-title">Initializing…</h2>
+          <p id="hero-desc">Connecting to local AI scanner…</p>
+        </div>
+        <div class="protection-glow"></div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <span class="stat-value" id="messages-scanned">0</span>
+          <span class="stat-label">Scanned</span>
+        </div>
+        <div class="stat-card danger">
+          <span class="stat-value" id="threats-blocked">0</span>
+          <span class="stat-label">Risks</span>
+        </div>
+        <div class="stat-card safe">
+          <span class="stat-value" id="trust-score">100%</span>
+          <span class="stat-label">Safety</span>
+        </div>
+      </div>
+
+      <div class="action-section">
+        <h3>Quick Scan</h3>
+        <div class="input-group">
+          <textarea id="scan-input" placeholder="Paste a suspicious message to analyze…"></textarea>
+          <button id="scan-btn" class="primary-btn">🔍 Analyze Message</button>
+        </div>
+      </div>
+
+      <div id="scan-result" class="result-container hidden"></div>
+
+      <div class="recent-section">
+        <div class="section-header">
+          <h3>Recent Scans</h3>
+        </div>
+        <div class="alert-list" id="history-list">
+          <div class="empty-state">No scans yet — browse WhatsApp, Gmail, or Outlook to start.</div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ═══ URL Scan Tab ═══ -->
+    <main id="tab-url-scan" class="hidden">
+      <div class="settings-card">
+        <h3>Latest URL Scan Result</h3>
+        <div id="url-scan-display" class="url-scan-result">
+          <div class="empty-state">No URL scanned yet. Browse any website to trigger a scan.</div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ═══ Settings Tab ═══ -->
+    <main id="tab-settings" class="hidden">
+      <div class="settings-card">
+        <h3>VirusTotal Integration</h3>
+        <p class="settings-hint">API key required for real-time website URL intelligence scanning.</p>
+        <div class="input-group">
+          <label for="vt-api-key">API Key</label>
+          <input type="password" id="vt-api-key" placeholder="Enter your VirusTotal API Key" />
+          <button id="save-vt-key" class="primary-btn">💾 Save Key</button>
+        </div>
+        <div id="vt-save-msg" class="save-msg"></div>
+      </div>
+
+      <div class="settings-card">
+        <h3>Scan Toggles</h3>
+        <div class="feature-toggle">
+          <div>
+            <span class="toggle-label">Scan websites on navigation</span>
+            <span class="toggle-desc">Automatic VirusTotal + local model fusion</span>
+          </div>
+          <div class="toggle active" id="url-scan-toggle"></div>
+        </div>
+        <div class="feature-toggle">
+          <div>
+            <span class="toggle-label">Heuristic keyword analysis</span>
+            <span class="toggle-desc">Check messages for suspicious patterns</span>
+          </div>
+          <div class="toggle active"></div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ═══ Footer ═══ -->
+    <footer>
+      <span class="footer-text">R.E.I. v1.0.0 — Local AI + VirusTotal Fusion</span>
+    </footer>
+  </div>
+
+  <script src="scripts/popup.js"></script>
+</body>
+</html>

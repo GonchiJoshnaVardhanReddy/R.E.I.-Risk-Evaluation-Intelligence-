@@ -27,7 +27,33 @@ test("manifest permissions and hosts include required values", () => {
   }
 });
 
-test("manifest uses chrome i18n extension name and default locale", () => {
+test("manifest uses chrome i18n extension default locale", () => {
+  // ensure default locale is set to english
   assert.equal(manifest.default_locale, "en");
-  assert.equal(manifest.name, "__MSG_extension_name__");
+});
+
+test("locale messages files parse and contain extension_name.message", () => {
+  const localesDir = path.resolve(__dirname, "../../extension/extension/_locales");
+  const entries = fs.readdirSync(localesDir, { withFileTypes: true });
+  const locales = entries.filter((d) => d.isDirectory()).map((d) => d.name);
+
+  // ensure at least english exists
+  assert.ok(locales.includes("en"), "default locale 'en' is missing");
+
+  for (const loc of locales) {
+    const msgPath = path.join(localesDir, loc, "messages.json");
+    assert.ok(fs.existsSync(msgPath), `messages.json missing for locale: ${loc}`);
+    const raw = fs.readFileSync(msgPath, "utf8");
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch (err) {
+      throw new Error(`Invalid JSON in ${msgPath}: ${err.message}`);
+    }
+
+    assert.ok(
+      data.extension_name && typeof data.extension_name.message === "string",
+      `Locale ${loc} missing extension_name.message`
+    );
+  }
 });

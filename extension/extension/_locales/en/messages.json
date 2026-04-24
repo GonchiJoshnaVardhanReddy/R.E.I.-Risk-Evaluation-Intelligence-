@@ -1,0 +1,8 @@
+{
+  "extension_name": {
+    "message": "R.E.I. Risk Evaluation Intelligence"
+  },
+  "extension_description": {
+    "message": "Offline multi-channel scam detection and website risk intelligence assistant powered by local AI and VirusTotal URL analysis."
+  }
+}

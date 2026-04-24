@@ -1,0 +1,65 @@
+<!-- Settings page content — rendered dynamically by renderer.js -->
+<div class="page-header">
+  <h1 data-i18n="settings">Settings</h1>
+  <p data-i18n="configure_preferences">Configure R.E.I. system preferences</p>
+</div>
+<div class="two-col">
+  <div class="card">
+    <div class="card-title" data-i18n="api_configuration">API Configuration</div>
+    <div class="form-group">
+      <label for="set-vt-key" data-i18n="vt_api_key">VirusTotal API Key</label>
+      <input class="form-input mono" id="set-vt-key" type="password" data-i18n-placeholder="enter_vt_key" placeholder="Enter your VirusTotal API key" />
+    </div>
+    <button class="btn btn-primary" id="btn-save-settings" data-i18n="save_settings">💾 Save Settings</button>
+    <div id="settings-msg" class="mt-8 text-sm"></div>
+  </div>
+  <div class="card">
+    <div class="card-title" data-i18n="protection_toggles">Protection Toggles</div>
+    <div class="toggle-group">
+      <div>
+        <div class="toggle-label" data-i18n="url_scanning">URL Scanning</div>
+        <div class="toggle-desc" data-i18n="url_scanning_desc">Analyze URLs in messages for phishing domains</div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="tog-url" />
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="toggle-group">
+      <div>
+        <div class="toggle-label" data-i18n="file_scanning">File Scanning</div>
+        <div class="toggle-desc" data-i18n="file_scanning_desc">Automatically scan downloaded files</div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="tog-file" />
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="toggle-group">
+      <div>
+        <div class="toggle-label" data-i18n="reputation_tracking">Reputation Tracking</div>
+        <div class="toggle-desc" data-i18n="reputation_tracking_desc">Track sender risk history across detections</div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="tog-rep" />
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+  </div>
+</div>
+<div class="two-col" style="margin-top: 16px;">
+  <div class="card">
+    <div class="card-title" data-i18n="language">Language</div>
+    <p class="text-sm text-muted mb-16" data-i18n="language_desc">Choose the display language for the control panel</p>
+    <div class="form-group">
+      <select id="panelLanguageSelector" class="form-input">
+        <option value="en">English</option>
+        <option value="hi">हिन्दी (Hindi)</option>
+        <option value="kn">ಕನ್ನಡ (Kannada)</option>
+        <option value="te">తెలుగు (Telugu)</option>
+        <option value="ml">മലയാളം (Malayalam)</option>
+        <option value="ta">தமிழ் (Tamil)</option>
+      </select>
+    </div>
+  </div>
+</div>

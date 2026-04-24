@@ -1,0 +1,89 @@
+/* ═══════════════════════════════════════════════════════════════
+   R.E.I. — Content Script Warning Banners
+   ═══════════════════════════════════════════════════════════════ */
+
+.rei-warning {
+  margin: 8px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  color: #fff;
+  z-index: 9999;
+  animation: reiFadeIn 0.3s ease-out;
+  backdrop-filter: blur(4px);
+}
+
+@keyframes reiFadeIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── HIGH risk: red ──────────────────────────────────────────── */
+.rei-warning.high {
+  background: linear-gradient(135deg, rgba(255, 62, 62, 0.95), rgba(200, 30, 30, 0.92));
+  border-left: 4px solid #ff0000;
+  box-shadow: 0 4px 20px rgba(255, 62, 62, 0.35);
+}
+
+/* ── MEDIUM risk: orange ─────────────────────────────────────── */
+.rei-warning.medium {
+  background: linear-gradient(135deg, rgba(250, 140, 22, 0.95), rgba(210, 110, 10, 0.92));
+  border-left: 4px solid #fa8c16;
+  box-shadow: 0 4px 20px rgba(250, 140, 22, 0.3);
+}
+
+/* ── Header row ──────────────────────────────────────────────── */
+.rei-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  letter-spacing: 0.4px;
+}
+
+.rei-icon {
+  font-size: 16px;
+}
+
+.rei-title {
+  flex: 1;
+  font-size: 12.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.rei-score {
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+/* ── Body ────────────────────────────────────────────────────── */
+.rei-body ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.rei-body li {
+  margin-bottom: 2px;
+  opacity: 0.9;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ── Glow borders on original containers ─────────────────────── */
+.rei-glow-high {
+  border: 2px solid #ff3e3e !important;
+  border-radius: 8px !important;
+  box-shadow: 0 0 12px rgba(255, 62, 62, 0.5) !important;
+}
+
+.rei-glow-medium {
+  border: 2px solid #fa8c16 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 0 12px rgba(250, 140, 22, 0.45) !important;
+}

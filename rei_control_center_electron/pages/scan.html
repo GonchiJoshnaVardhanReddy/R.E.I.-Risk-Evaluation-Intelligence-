@@ -1,0 +1,32 @@
+<!-- Manual Scan page content — rendered dynamically by renderer.js -->
+<div class="page-header">
+  <h1 data-i18n="manual_scan">Manual Scan</h1>
+  <p data-i18n="analyze_messages_desc">Analyze messages, URLs, and files for risk assessment</p>
+</div>
+<div class="scan-grid">
+  <div class="card">
+    <div class="card-title" data-i18n="text_analysis">Text Analysis</div>
+    <div class="form-group">
+      <label for="scan-text" data-i18n="message_content">Message Content</label>
+      <textarea class="form-textarea" id="scan-text" data-i18n-placeholder="paste_suspicious" placeholder="Paste suspicious message content here…"></textarea>
+    </div>
+    <button class="btn btn-primary" id="btn-scan-text" data-i18n="analyze_text">🔍 Analyze Text</button>
+  </div>
+  <div class="card">
+    <div class="card-title" data-i18n="url_analysis">URL Analysis</div>
+    <div class="form-group">
+      <label for="scan-url">URL</label>
+      <input class="form-input" id="scan-url" placeholder="https://example.com/suspicious-link" />
+    </div>
+    <button class="btn btn-primary" id="btn-scan-url" data-i18n="analyze_url">🔗 Analyze URL</button>
+  </div>
+</div>
+<div class="mt-16">
+  <div class="card">
+    <div class="card-title" data-i18n="file_analysis">File Analysis</div>
+    <p class="text-sm text-muted mb-16" data-i18n="supported_formats">Supported: .txt, .pdf, .docx, .html, .eml</p>
+    <button class="btn btn-file" id="btn-scan-file" data-i18n="choose_file">📁 Choose File to Scan</button>
+    <div id="scan-file-name" class="mt-8 text-sm text-muted"></div>
+  </div>
+</div>
+<div id="scan-result" class="result-box"></div>

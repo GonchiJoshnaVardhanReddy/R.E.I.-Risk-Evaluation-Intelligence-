@@ -1,0 +1,28 @@
+<!-- Threat History page content — rendered dynamically by renderer.js -->
+<div class="page-header">
+  <h1 data-i18n="threat_history">Threat History</h1>
+  <p data-i18n="complete_log">Complete log of all detected threats</p>
+</div>
+<div class="filter-bar">
+  <input class="form-input" id="hist-search" data-i18n-placeholder="search_placeholder" placeholder="Search sender, platform, text…" />
+  <select id="hist-level-filter">
+    <option value="all" data-i18n="all_levels">All Levels</option>
+    <option value="HIGH" data-i18n="high">High</option>
+    <option value="MEDIUM" data-i18n="medium">Medium</option>
+    <option value="LOW" data-i18n="low">Low</option>
+  </select>
+</div>
+<div class="table-wrapper" style="max-height:calc(100vh - 260px);overflow-y:auto">
+  <table>
+    <thead>
+      <tr>
+        <th data-col="timestamp" data-i18n="timestamp">Timestamp</th>
+        <th data-col="platform" data-i18n="platform">Platform</th>
+        <th data-col="sender" data-i18n="sender">Sender</th>
+        <th data-col="risk_score" data-i18n="score">Score</th>
+        <th data-col="risk_level" data-i18n="level">Level</th>
+      </tr>
+    </thead>
+    <tbody id="hist-body"></tbody>
+  </table>
+</div>

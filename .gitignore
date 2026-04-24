@@ -8,6 +8,14 @@ dataset/
 results/
 rei_model/
 rei_training_dataset.csv
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+
+# Node / Electron dependencies
+node_modules/
+rei_control_center_electron/node_modules/
 
 # Runtime state
 detection_log.json

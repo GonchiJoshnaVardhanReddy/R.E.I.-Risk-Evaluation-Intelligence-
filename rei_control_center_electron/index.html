@@ -17,38 +17,38 @@
         <div class="logo-icon">R</div>
         <div class="logo-text">
           <span class="title">R.E.I.</span>
-          <span class="subtitle">Control Center</span>
+          <span class="subtitle" data-i18n="control_center">Control Center</span>
         </div>
       </div>
 
       <nav id="sidebar-nav">
         <div class="nav-item active" data-page="dashboard">
           <svg class="nav-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h8V3H3v10Zm10 8h8V11h-8v10ZM3 21h8v-6H3v6Zm10-10h8V3h-8v8Z"/></svg>
-          <span>Overview</span>
+          <span data-i18n="overview">Overview</span>
         </div>
         <div class="nav-item" data-page="protection">
           <svg class="nav-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 7 3v6c0 5.2-3.4 9.9-7 11-3.6-1.1-7-5.8-7-11V5l7-3Z"/></svg>
-          <span>Live Protection</span>
+          <span data-i18n="live_protection">Live Protection</span>
         </div>
         <div class="nav-item" data-page="history">
           <svg class="nav-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18V3H3Zm2 2h14v14H5V5Zm2 9h2v3H7v-3Zm4-4h2v7h-2v-7Zm4-2h2v9h-2V8Z"/></svg>
-          <span>Threat Timeline</span>
+          <span data-i18n="threat_timeline">Threat Timeline</span>
         </div>
         <div class="nav-item" data-page="reputation">
           <svg class="nav-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm-8 9a8 8 0 1 1 16 0H4Z"/></svg>
-          <span>Reputation Intelligence</span>
+          <span data-i18n="reputation_intelligence">Reputation Intelligence</span>
         </div>
         <div class="nav-item" data-page="scan">
           <svg class="nav-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 2a9 9 0 1 0 5.7 16l4.6 4.6 1.4-1.4-4.6-4.6A9 9 0 0 0 11 2Zm0 2a7 7 0 1 1 0 14 7 7 0 0 1 0-14Z"/></svg>
-          <span>Scan Center</span>
+          <span data-i18n="scan_center">Scan Center</span>
         </div>
         <div class="nav-item" data-page="reports">
           <svg class="nav-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5V3Zm2 2v14h10V5H7Zm2 3h6v2H9V8Zm0 4h6v2H9v-2Zm0 4h4v2H9v-2Z"/></svg>
-          <span>Reports</span>
+          <span data-i18n="reports">Reports</span>
         </div>
         <div class="nav-item" data-page="settings">
           <svg class="nav-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="m19.4 13 .6-1-1.2-2.1-1.2-.2a6.8 6.8 0 0 0-.8-1.4l.5-1.1-1.8-1.8-1.1.5a6.8 6.8 0 0 0-1.4-.8L12 2.2 9.9 3.4l-.2 1.2c-.5.2-1 .5-1.4.8l-1.1-.5-1.8 1.8.5 1.1c-.3.4-.6.9-.8 1.4l-1.2.2L2.2 12l1.2 2.1 1.2.2c.2.5.5 1 .8 1.4l-.5 1.1 1.8 1.8 1.1-.5c.4.3.9.6 1.4.8l.2 1.2 2.1 1.2 2.1-1.2.2-1.2c.5-.2 1-.5 1.4-.8l1.1.5 1.8-1.8-.5-1.1c.3-.4.6-.9.8-1.4l1.2-.2ZM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8Z"/></svg>
-          <span>Settings</span>
+          <span data-i18n="settings">Settings</span>
         </div>
       </nav>
 
@@ -61,7 +61,7 @@
       <header id="top-header">
         <div class="header-title">R.E.I. Control Center</div>
         <div class="header-right">
-          <span id="scanner-indicator" class="status-pill offline">Scanner Offline</span>
+          <span id="scanner-indicator" class="status-pill offline" data-i18n="scanner_offline">Scanner Offline</span>
           <span id="system-clock" class="header-clock">--:--:--</span>
         </div>
       </header>
@@ -78,6 +78,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
   <script src="systemMetrics.js"></script>
+  <script src="renderer/i18n.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

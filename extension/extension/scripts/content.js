@@ -231,10 +231,14 @@ function injectWarning(container, result) {
 
   const riskIcon = result.risk_level === "HIGH" ? "🔴" : "🟠";
 
+  const _t = typeof reiExtI18n !== "undefined" ? reiExtI18n.t : (k) => k;
+  const alertPrefix = _t("warning_title_prefix");
+  const riskLabel = _t(`risk_${result.risk_level.toLowerCase()}`);
+
   warning.innerHTML = `
     <div class="rei-header">
       <span class="rei-icon">${riskIcon}</span>
-      <span class="rei-title">R.E.I. ALERT — ${result.risk_level} RISK</span>
+      <span class="rei-title">${alertPrefix} — ${riskLabel} ${_t("common_risk")}</span>
       <span class="rei-score">${result.score}%</span>
     </div>
     <div class="rei-body">

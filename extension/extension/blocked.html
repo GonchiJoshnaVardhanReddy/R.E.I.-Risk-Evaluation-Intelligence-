@@ -211,48 +211,49 @@
 <body>
   <div class="container">
     <span class="shield-icon">🛡️</span>
-    <h1>Website Blocked by R.E.I.</h1>
-    <p class="subtitle">This website was flagged as potentially dangerous by the R.E.I. hybrid risk intelligence system.</p>
+    <h1 data-i18n="blocked_heading">Website Blocked by R.E.I.</h1>
+    <p class="subtitle" data-i18n="blocked_subtitle">This website was flagged as potentially dangerous by the R.E.I. hybrid risk intelligence system.</p>
 
     <div class="url-box" id="target-url">Loading…</div>
 
-    <p class="detail-text">This site may be attempting phishing, distributing malware, or hosting scam content.</p>
+    <p class="detail-text" data-i18n="blocked_detail_text">This site may be attempting phishing, distributing malware, or hosting scam content.</p>
 
     <div class="attribution" id="attribution-box">
-      <h3>Risk Source Attribution</h3>
+      <h3 data-i18n="common_risk_source_attribution">Risk Source Attribution</h3>
       <div class="attr-row">
-        <span class="attr-label">Combined Risk</span>
+        <span class="attr-label" data-i18n="common_combined_risk">Combined Risk</span>
         <span class="attr-badge high" id="attr-combined">HIGH</span>
       </div>
       <div class="attr-row">
-        <span class="attr-label">VirusTotal</span>
+        <span class="attr-label" data-i18n="common_virustotal">VirusTotal</span>
         <span class="attr-badge" id="attr-vt">—</span>
       </div>
       <div class="attr-row">
-        <span class="attr-label">R.E.I. Local Model</span>
+        <span class="attr-label" data-i18n="common_local_model">R.E.I. Local Model</span>
         <span class="attr-badge" id="attr-local">—</span>
       </div>
       <div class="attr-row">
-        <span class="attr-label">VirusTotal Malicious Count</span>
+        <span class="attr-label" data-i18n="blocked_vt_malicious_count">VirusTotal Malicious Count</span>
         <span class="attr-badge" id="attr-vt-malicious">0</span>
       </div>
       <div class="attr-row">
-        <span class="attr-label">VirusTotal Suspicious Count</span>
+        <span class="attr-label" data-i18n="blocked_vt_suspicious_count">VirusTotal Suspicious Count</span>
         <span class="attr-badge" id="attr-vt-suspicious">0</span>
       </div>
       <div class="attr-row">
-        <span class="attr-label">Local Model Score</span>
+        <span class="attr-label" data-i18n="common_local_model_score">Local Model Score</span>
         <span class="attr-badge" id="attr-local-score">0.00</span>
       </div>
     </div>
 
     <div class="actions">
-      <button class="btn btn-back" id="go-back-btn">← Go Back Safely</button>
-      <button class="btn btn-proceed" id="proceed-btn">Proceed Anyway (Unsafe)</button>
+      <button class="btn btn-back" id="go-back-btn" data-i18n="blocked_go_back">← Go Back Safely</button>
+      <button class="btn btn-proceed" id="proceed-btn" data-i18n="blocked_proceed">Proceed Anyway (Unsafe)</button>
     </div>
 
-    <div class="brand">R.E.I. RISK EVALUATION INTELLIGENCE</div>
+    <div class="brand" data-i18n="blocked_brand">R.E.I. RISK EVALUATION INTELLIGENCE</div>
   </div>
+  <script src="scripts/i18n.js"></script>
   <script src="scripts/blocked.js"></script>
 </body>
 </html>

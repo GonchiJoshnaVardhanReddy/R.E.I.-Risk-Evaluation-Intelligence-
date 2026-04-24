@@ -9,6 +9,8 @@ const pages = typeof document !== "undefined" ? document.querySelectorAll(".page
 let activePage = "dashboard";
 const intervals = {};
 let latestSystemStatus = null;
+let latestDetectionLog = [];
+let latestReputationDb = {};
 const chartState = {
   timeline: null,
   risk: null,
@@ -90,6 +92,23 @@ function levelClass(level) {
   return "safe";
 }
 
+function normalizeSystemStatus(statusPayload = {}) {
+  const scannerOnline = Boolean(statusPayload.scannerOnline ?? statusPayload.scannerUp);
+  const monitorRunning = Boolean(statusPayload.monitorRunning ?? statusPayload.monitorUp);
+  const extensionActive = Boolean(statusPayload.extensionActive ?? statusPayload.extensionConnected);
+  return {
+    scannerOnline,
+    monitorRunning,
+    extensionActive,
+    scannerUp: scannerOnline,
+    monitorUp: monitorRunning,
+    extensionConnected: extensionActive,
+    lastExtensionEventAt: statusPayload.lastExtensionEventAt || null,
+    detLogExists: Boolean(statusPayload.detLogExists),
+    repDbExists: Boolean(statusPayload.repDbExists),
+  };
+}
+
 function badgeHtml(level) {
   const normalized = String(level || "LOW").toUpperCase();
   return `<span class="risk-badge ${levelClass(normalized)}">${normalized}</span>`;
@@ -103,6 +122,9 @@ function statusModel({ online, degraded = false }) {
 
 function extensionHealthFromStatus(statusPayload) {
   const last = statusPayload?.lastExtensionEventAt;
+  if (statusPayload?.extensionActive && !last) {
+    return { label: "Active", cls: "running", subtitle: "Recent activity detected" };
+  }
   if (!last) return { label: "Offline", cls: "offline", subtitle: "No activity detected" };
   const lastTs = toDate(last);
   if (!lastTs) return { label: "Offline", cls: "offline", subtitle: "Invalid activity timestamp" };
@@ -114,7 +136,22 @@ function extensionHealthFromStatus(statusPayload) {
 
 async function getSystemStatus() {
   if (latestSystemStatus) return latestSystemStatus;
-  return window.rei.systemStatus();
+  const reader = window.rei.getSystemStatus || window.rei.systemStatus;
+  const status = await reader();
+  latestSystemStatus = normalizeSystemStatus(status);
+  return latestSystemStatus;
+}
+
+async function getDetectionLog() {
+  const logs = await window.rei.readDetectionLog();
+  latestDetectionLog = Array.isArray(logs) ? logs : [];
+  return latestDetectionLog;
+}
+
+async function getReputationDb() {
+  const db = await window.rei.readReputationDb();
+  latestReputationDb = db && typeof db === "object" ? db : {};
+  return latestReputationDb;
 }
 
 async function getMetricsSnapshot() {
@@ -136,22 +173,23 @@ function updateClock() {
 }
 
 async function updateHeaderStatus() {
+  const _t = window.reiI18n ? window.reiI18n.t : (k) => k;
   try {
     const status = await getSystemStatus();
     const scanner = document.getElementById("scanner-indicator");
     if (!scanner) return;
-    if (status.scannerUp) {
+    if (status.scannerOnline) {
       scanner.className = "status-pill running";
-      scanner.textContent = "Scanner Online";
+      scanner.textContent = _t("scanner_online");
     } else {
       scanner.className = "status-pill offline";
-      scanner.textContent = "Scanner Offline";
+      scanner.textContent = _t("scanner_offline");
     }
   } catch (_error) {
     const scanner = document.getElementById("scanner-indicator");
     if (!scanner) return;
     scanner.className = "status-pill offline";
-    scanner.textContent = "Scanner Offline";
+    scanner.textContent = _t("scanner_offline");
   }
 }
 
@@ -160,6 +198,279 @@ function startHeaderServices() {
   updateHeaderStatus();
   intervals.clock = setInterval(updateClock, 1000);
   intervals.headerStatus = setInterval(updateHeaderStatus, 3000);
+}
+
+function sortDetectionsDescending(entries) {
+  const safeEntries = Array.isArray(entries) ? [...entries] : [];
+  return safeEntries.sort((left, right) => {
+    const leftTs = toDate(left?.timestamp)?.getTime();
+    const rightTs = toDate(right?.timestamp)?.getTime();
+    if (Number.isFinite(leftTs) && Number.isFinite(rightTs)) {
+      return rightTs - leftTs;
+    }
+    if (Number.isFinite(rightTs)) return 1;
+    if (Number.isFinite(leftTs)) return -1;
+    return 0;
+  });
+}
+
+function getLatestDetections(entries, limit = 50) {
+  return sortDetectionsDescending(entries).slice(0, limit);
+}
+
+function buildRiskDistribution(entries) {
+  const distribution = { LOW: 0, MEDIUM: 0, HIGH: 0 };
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    const level = String(entry?.risk_level || "LOW").toUpperCase();
+    if (level in distribution) distribution[level] += 1;
+  });
+  return distribution;
+}
+
+function buildPlatformDistribution(entries) {
+  const distribution = {};
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    const platform = String(entry?.platform || "unknown").trim() || "unknown";
+    distribution[platform] = (distribution[platform] || 0) + 1;
+  });
+  return distribution;
+}
+
+function buildDashboardMetrics(entries, now = new Date()) {
+  const safeEntries = Array.isArray(entries) ? entries : [];
+  const todayPrefix = now.toISOString().slice(0, 10);
+  const todaysEntries = safeEntries.filter((entry) => String(entry?.timestamp || "").startsWith(todayPrefix));
+  const senderCounts = {};
+
+  todaysEntries.forEach((entry) => {
+    const sender = String(entry?.sender || "unknown_sender").trim() || "unknown_sender";
+    senderCounts[sender] = (senderCounts[sender] || 0) + 1;
+  });
+
+  const topSender = Object.entries(senderCounts)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] || "—";
+
+  return {
+    detectionsToday: todaysEntries.length,
+    mediumRiskCount: todaysEntries.filter((entry) => String(entry?.risk_level).toUpperCase() === "MEDIUM").length,
+    highRiskCount: todaysEntries.filter((entry) => String(entry?.risk_level).toUpperCase() === "HIGH").length,
+    topSender,
+    platformDistribution: buildPlatformDistribution(todaysEntries),
+    riskDistribution: buildRiskDistribution(todaysEntries),
+  };
+}
+
+function reputationLevelFromBoost(riskBoost) {
+  const numericBoost = Number(riskBoost || 0);
+  if (numericBoost >= 0.25) return "HIGH";
+  if (numericBoost >= 0.10) return "MEDIUM";
+  return "LOW";
+}
+
+function buildReputationSummary(db) {
+  const rows = Object.entries(db || {})
+    .map(([id, value]) => {
+      const count = Number(value?.count || 0);
+      const riskBoost = Number(value?.risk_boost || 0);
+      return {
+        id,
+        count,
+        riskBoost,
+        riskLevel: reputationLevelFromBoost(riskBoost),
+      };
+    })
+    .sort((left, right) => right.count - left.count || right.riskBoost - left.riskBoost || left.id.localeCompare(right.id));
+
+  const senderRiskCounts = { LOW: 0, MEDIUM: 0, HIGH: 0 };
+  rows.forEach((row) => {
+    senderRiskCounts[row.riskLevel] += 1;
+  });
+
+  return {
+    rows,
+    senderRiskCounts,
+    topSuspiciousSenders: rows.slice(0, 10),
+  };
+}
+
+function primaryExplanation(entry) {
+  const explanations = Array.isArray(entry?.explanations) ? entry.explanations.filter(Boolean) : [];
+  return explanations.length ? explanations.join(" | ") : "No explanation provided";
+}
+
+function renderRecentDetectionsTable(containerId, entries, { emptyMessage = "No detections yet.", limit = 8 } = {}) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const recentDetections = getLatestDetections(entries, limit);
+
+  if (!recentDetections.length) {
+    container.innerHTML = `<div class="empty-state">${escHtml(emptyMessage)}</div>`;
+    return;
+  }
+
+  const rows = recentDetections.map((entry) => {
+    const level = String(entry?.risk_level || "LOW").toUpperCase();
+    return `
+      <div class="alert-row ${levelClass(level)}">
+        <div class="alert-time">${escHtml(formatTimestamp(entry?.timestamp))}</div>
+        <div class="alert-platform">${escHtml(entry?.platform || "unknown")}</div>
+        <div class="alert-risk">${badgeHtml(level)}</div>
+        <div class="alert-reason">${escHtml(primaryExplanation(entry))}</div>
+      </div>
+    `;
+  }).join("");
+
+  container.innerHTML = `
+    <div class="alert-header">
+      <span>Timestamp</span>
+      <span>Platform</span>
+      <span>Risk</span>
+      <span>Reason</span>
+    </div>
+    ${rows}
+  `;
+}
+
+function renderPlatformDistribution(containerId, distribution) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const rows = Object.entries(distribution || {}).sort((left, right) => right[1] - left[1]);
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty-state">No platform activity yet.</div>`;
+    return;
+  }
+
+  container.innerHTML = rows.map(([platform, count]) => `
+    <div class="alert-row">
+      <div class="alert-platform">${escHtml(platform)}</div>
+      <div class="alert-reason">${count} detections</div>
+    </div>
+  `).join("");
+}
+
+function renderOverview(logs, status) {
+  const safeLogs = Array.isArray(logs) ? logs : [];
+  const normalizedStatus = normalizeSystemStatus(status);
+  const metrics = buildDashboardMetrics(safeLogs);
+  const riskDistribution = buildRiskDistribution(safeLogs);
+
+  const totalDetections = document.getElementById("metric-total-detections");
+  const mediumDetections = document.getElementById("metric-medium-detections");
+  const highDetections = document.getElementById("metric-high-detections");
+  const topSender = document.getElementById("metric-top-sender");
+
+  if (totalDetections) totalDetections.textContent = String(metrics.detectionsToday);
+  if (mediumDetections) mediumDetections.textContent = String(metrics.mediumRiskCount);
+  if (highDetections) highDetections.textContent = String(metrics.highRiskCount);
+  if (topSender) topSender.textContent = metrics.topSender;
+
+  renderStatusCard(
+    "status-card-scanner",
+    "Scanner API",
+    "scanner",
+    statusModel({ online: normalizedStatus.scannerOnline }),
+    normalizedStatus.scannerOnline ? "FastAPI documentation endpoint is reachable" : "No response from /docs",
+  );
+  renderStatusCard(
+    "status-card-monitor",
+    "File Monitor",
+    "monitor",
+    statusModel({ online: normalizedStatus.monitorRunning }),
+    normalizedStatus.monitorRunning ? "File monitor activity detected" : "Monitor is inactive",
+  );
+  const extensionHealth = extensionHealthFromStatus(normalizedStatus);
+  renderStatusCard(
+    "status-card-extension",
+    "Extension Activity",
+    "extension",
+    { label: extensionHealth.label, cls: extensionHealth.cls },
+    extensionHealth.subtitle,
+  );
+
+  const minuteData = detectionsPerMinute(safeLogs, 10);
+  ensureTimelineChart(minuteData.labels, minuteData.values);
+  ensureRiskChart([riskDistribution.LOW, riskDistribution.MEDIUM, riskDistribution.HIGH]);
+  renderPlatformDistribution("overview-platform-distribution", metrics.platformDistribution);
+  renderRecentDetectionsTable("alerts-stream", safeLogs, { limit: 10 });
+}
+
+function renderThreatTimeline(logs) {
+  const body = document.getElementById("history-body");
+  if (!body) return;
+  const recentDetections = getLatestDetections(logs, 50);
+  body.innerHTML = recentDetections.map((entry) => `
+    <tr class="${levelClass(entry?.risk_level)}">
+      <td>${escHtml(formatTimestamp(entry?.timestamp))}</td>
+      <td>${escHtml(entry?.platform || "unknown")}</td>
+      <td>${badgeHtml(entry?.risk_level || "LOW")}</td>
+      <td>${escHtml(entry?.sender || "unknown_sender")}</td>
+      <td>${escHtml(primaryExplanation(entry))}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="5" class="empty-row">No threat history available.</td></tr>`;
+}
+
+function renderProtection(logs, status) {
+  const normalizedStatus = normalizeSystemStatus(status);
+  renderStatusCard(
+    "protection-scanner",
+    "Scanner Engine",
+    "scanner",
+    statusModel({ online: normalizedStatus.scannerOnline }),
+    normalizedStatus.scannerOnline ? "Online" : "Offline",
+  );
+  renderStatusCard(
+    "protection-monitor",
+    "File Monitor",
+    "monitor",
+    statusModel({ online: normalizedStatus.monitorRunning }),
+    normalizedStatus.monitorRunning ? "Online" : "Offline",
+  );
+  const extensionHealth = extensionHealthFromStatus(normalizedStatus);
+  renderStatusCard(
+    "protection-extension",
+    "Extension Connectivity",
+    "extension",
+    { label: extensionHealth.label, cls: extensionHealth.cls },
+    extensionHealth.subtitle,
+  );
+  renderRecentDetectionsTable("protection-recent-detections", logs, {
+    emptyMessage: "No recent detections available.",
+    limit: 8,
+  });
+}
+
+function renderReputation(db) {
+  const summary = buildReputationSummary(db);
+  const high = document.getElementById("reputation-high-count");
+  const medium = document.getElementById("reputation-medium-count");
+  const low = document.getElementById("reputation-low-count");
+  const body = document.getElementById("reputation-body");
+  const list = document.getElementById("reputation-top-senders");
+
+  if (high) high.textContent = String(summary.senderRiskCounts.HIGH);
+  if (medium) medium.textContent = String(summary.senderRiskCounts.MEDIUM);
+  if (low) low.textContent = String(summary.senderRiskCounts.LOW);
+
+  if (body) {
+    body.innerHTML = summary.rows.map((row) => `
+      <tr>
+        <td>${escHtml(row.id)}</td>
+        <td>${row.count}</td>
+        <td>${row.riskBoost.toFixed(2)}</td>
+        <td>${badgeHtml(row.riskLevel)}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="4" class="empty-row">No reputation intelligence entries available.</td></tr>`;
+  }
+
+  if (list) {
+    list.innerHTML = summary.topSuspiciousSenders.map((row) => `
+      <div class="alert-row ${levelClass(row.riskLevel)}">
+        <div class="alert-platform">${escHtml(row.id)}</div>
+        <div class="alert-risk">${badgeHtml(row.riskLevel)}</div>
+        <div class="alert-reason">${row.count} detections | boost ${row.riskBoost.toFixed(2)}</div>
+      </div>
+    `).join("") || `<div class="empty-state">No suspicious senders recorded.</div>`;
+  }
 }
 
 // ── Routing ─────────────────────────────────────────────────────
@@ -320,32 +631,33 @@ function detectionsPerMinute(logs, minutes = 10) {
 // ── Overview (SOC Dashboard) ────────────────────────────────────
 function initOverview() {
   const page = document.getElementById("page-dashboard");
+  const _t = window.reiI18n ? window.reiI18n.t : (k) => k;
   page.innerHTML = `
     <div class="page-header">
-      <h1>Overview</h1>
+      <h1 data-i18n="overview">${_t("overview")}</h1>
       <p>Security operations center view for platform health and active threats.</p>
     </div>
 
     <div class="soc-grid dashboard-row dashboard-row-metrics">
       <div class="soc-card metric-card">
-        <div class="metric-label">CPU Usage</div>
-        <div class="metric-value" id="metric-cpu-value">0%</div>
-        <div class="metric-bar"><div id="metric-cpu-bar" class="metric-fill safe"></div></div>
+        <div class="metric-label">Total Detections Today</div>
+        <div class="metric-value" id="metric-total-detections">0</div>
+        <div class="metric-sub">Live count from detection log</div>
       </div>
       <div class="soc-card metric-card">
-        <div class="metric-label">RAM Usage</div>
-        <div class="metric-value" id="metric-ram-value">0%</div>
-        <div class="metric-bar"><div id="metric-ram-bar" class="metric-fill warning"></div></div>
+        <div class="metric-label">Medium Risk Today</div>
+        <div class="metric-value" id="metric-medium-detections">0</div>
+        <div class="metric-sub">Entries marked MEDIUM</div>
       </div>
       <div class="soc-card metric-card">
-        <div class="metric-label">Network Activity</div>
-        <div class="metric-value" id="metric-net-value">0 Mbps</div>
-        <div class="metric-bar"><div id="metric-net-bar" class="metric-fill accent"></div></div>
+        <div class="metric-label">High Risk Today</div>
+        <div class="metric-value" id="metric-high-detections">0</div>
+        <div class="metric-sub">Entries marked HIGH</div>
       </div>
       <div class="soc-card metric-card">
-        <div class="metric-label">Threats Blocked Today</div>
-        <div class="metric-value" id="metric-threats-value">0</div>
-        <div class="metric-sub">MEDIUM + HIGH detections</div>
+        <div class="metric-label">Top Sender</div>
+        <div class="metric-value" id="metric-top-sender">—</div>
+        <div class="metric-sub">Most frequent sender today</div>
       </div>
     </div>
 
@@ -366,15 +678,20 @@ function initOverview() {
       </div>
     </div>
 
-    <div class="soc-card alerts-card dashboard-row dashboard-row-alerts">
-      <div class="card-title">Live Alerts Stream</div>
-      <div id="alerts-stream" class="alerts-stream"></div>
+    <div class="soc-grid dashboard-row dashboard-row-alerts">
+      <div class="soc-card alerts-card">
+        <div class="card-title">Platform Distribution</div>
+        <div id="overview-platform-distribution" class="alerts-stream"></div>
+      </div>
+      <div class="soc-card alerts-card">
+        <div class="card-title">Live Alerts Stream</div>
+        <div id="alerts-stream" class="alerts-stream"></div>
+      </div>
     </div>
   `;
 
   refreshOverview();
   intervals.overviewData = setInterval(refreshOverview, 5000);
-  intervals.overviewMetrics = setInterval(refreshMetricsOnly, 2000);
 }
 
 function renderStatusCard(id, title, iconKey, statusValue, subtitle) {
@@ -434,83 +751,23 @@ async function refreshOverview() {
   if (activePage !== "dashboard") return;
   try {
     const [logs, status] = await Promise.all([
-      window.rei.readDetectionLog(),
+      getDetectionLog(),
       getSystemStatus(),
     ]);
-
-    const safeLogs = Array.isArray(logs) ? logs : [];
-    const todayPrefix = new Date().toISOString().slice(0, 10);
-    const blockedToday = safeLogs.filter((entry) => {
-      const ts = String(entry?.timestamp || "");
-      const level = String(entry?.risk_level || "").toUpperCase();
-      return ts.startsWith(todayPrefix) && (level === "MEDIUM" || level === "HIGH");
-    }).length;
-    const blockedElement = document.getElementById("metric-threats-value");
-    if (blockedElement) blockedElement.textContent = String(blockedToday);
-
-    await refreshMetricsOnly();
-
-    renderStatusCard(
-      "status-card-scanner",
-      "Scanner API",
-      "scanner",
-      statusModel({ online: !!status.scannerUp }),
-      status.scannerUp ? "Model endpoint reachable" : "No response from scanner endpoint",
-    );
-    renderStatusCard(
-      "status-card-monitor",
-      "File Monitor",
-      "monitor",
-      statusModel({ online: !!status.monitorUp }),
-      status.monitorUp ? "File monitor is running" : "No active file monitor process",
-    );
-    const extHealth = extensionHealthFromStatus(status);
-    renderStatusCard(
-      "status-card-extension",
-      "Extension Activity",
-      "extension",
-      { label: extHealth.label, cls: extHealth.cls },
-      extHealth.subtitle,
-    );
-
-    const minuteData = detectionsPerMinute(safeLogs, 10);
-    ensureTimelineChart(minuteData.labels, minuteData.values);
-
-    const high = safeLogs.filter((entry) => String(entry?.risk_level).toUpperCase() === "HIGH").length;
-    const medium = safeLogs.filter((entry) => String(entry?.risk_level).toUpperCase() === "MEDIUM").length;
-    const low = safeLogs.filter((entry) => String(entry?.risk_level).toUpperCase() === "LOW").length;
-    ensureRiskChart([low, medium, high]);
-
-    const alertsStream = document.getElementById("alerts-stream");
-    if (alertsStream) {
-      const recentAlerts = [...safeLogs].reverse().slice(0, 10);
-      const streamRows = recentAlerts.map((entry) => {
-        const level = String(entry?.risk_level || "LOW").toUpperCase();
-        const reasonList = Array.isArray(entry?.explanations) ? entry.explanations : [];
-        const reason = reasonList[0] || "No explanation provided";
-        return `
-          <div class="alert-row ${levelClass(level)}">
-            <div class="alert-time">${escHtml(formatTimestamp(entry?.timestamp))}</div>
-            <div class="alert-platform">${escHtml(entry?.platform || "unknown")}</div>
-            <div class="alert-risk">${badgeHtml(level)}</div>
-            <div class="alert-reason">${escHtml(reason)}</div>
-          </div>
-        `;
-      }).join("");
-      alertsStream.innerHTML = streamRows
-        ? `
-          <div class="alert-header">
-            <span>Timestamp</span>
-            <span>Platform</span>
-            <span>Risk</span>
-            <span>Reason</span>
-          </div>
-          ${streamRows}
-        `
-        : `<div class="empty-state">No detections yet.</div>`;
-    }
+    renderOverview(logs, status);
   } catch (error) {
     console.error("Overview refresh error:", error);
+  }
+}
+
+// Optimized refresh using pre-pushed data (avoids extra IPC calls)
+function refreshOverviewWithData(logs, status) {
+  if (activePage !== "dashboard") return;
+  try {
+    latestDetectionLog = Array.isArray(logs) ? logs : [];
+    renderOverview(latestDetectionLog, status);
+  } catch (error) {
+    console.error("Overview refresh (pushed data) error:", error);
   }
 }
 
@@ -527,6 +784,10 @@ function initProtection() {
       <div class="soc-card status-card" id="protection-monitor"></div>
       <div class="soc-card status-card" id="protection-extension"></div>
     </div>
+    <div class="soc-card alerts-card mt-16">
+      <div class="card-title">Recent Detections</div>
+      <div id="protection-recent-detections" class="alerts-stream"></div>
+    </div>
   `;
   refreshProtection();
   intervals.protection = setInterval(refreshProtection, 3000);
@@ -535,29 +796,8 @@ function initProtection() {
 async function refreshProtection() {
   if (activePage !== "protection") return;
   try {
-    const status = await getSystemStatus();
-    renderStatusCard(
-      "protection-scanner",
-      "Scanner Engine",
-      "scanner",
-      statusModel({ online: !!status.scannerUp }),
-      status.scannerUp ? "Running" : "Offline",
-    );
-    renderStatusCard(
-      "protection-monitor",
-      "File Monitor",
-      "monitor",
-      statusModel({ online: !!status.monitorUp }),
-      status.monitorUp ? "Running" : "Offline",
-    );
-    const ext = extensionHealthFromStatus(status);
-    renderStatusCard(
-      "protection-extension",
-      "Extension Connectivity",
-      "extension",
-      { label: ext.label, cls: ext.cls },
-      ext.subtitle,
-    );
+    const [status, logs] = await Promise.all([getSystemStatus(), getDetectionLog()]);
+    renderProtection(logs, status);
   } catch (error) {
     console.error("Protection refresh error:", error);
   }
@@ -576,7 +816,7 @@ function initHistory() {
       <div class="table-wrapper">
         <table>
           <thead>
-            <tr><th>Timestamp</th><th>Platform</th><th>Sender</th><th>Score</th><th>Level</th></tr>
+            <tr><th>Timestamp</th><th>Platform</th><th>Risk</th><th>Sender</th><th>Explanation</th></tr>
           </thead>
           <tbody id="history-body"></tbody>
         </table>
@@ -584,22 +824,19 @@ function initHistory() {
     </div>
   `;
   loadHistory();
+  intervals.history = setInterval(loadHistory, 5000);
 }
 
 async function loadHistory() {
-  historyLogs = await window.rei.readDetectionLog();
-  const body = document.getElementById("history-body");
-  if (!body) return;
-  const safeLogs = Array.isArray(historyLogs) ? [...historyLogs].reverse() : [];
-  body.innerHTML = safeLogs.slice(0, 200).map((entry) => `
-    <tr class="${levelClass(entry?.risk_level)}">
-      <td>${escHtml(String(entry?.timestamp || "").replace("T", " ").slice(0, 19))}</td>
-      <td>${escHtml(entry?.platform || "")}</td>
-      <td>${escHtml(entry?.sender || "")}</td>
-      <td>${Number(entry?.risk_score || 0).toFixed(4)}</td>
-      <td>${badgeHtml(entry?.risk_level || "LOW")}</td>
-    </tr>
-  `).join("") || `<tr><td colspan="5" class="empty-row">No threat history available.</td></tr>`;
+  historyLogs = await getDetectionLog();
+  renderThreatTimeline(historyLogs);
+}
+
+// Optimized history refresh using pre-pushed data
+function refreshHistoryWithData(logs) {
+  if (activePage !== "history") return;
+  historyLogs = Array.isArray(logs) ? logs : [];
+  renderThreatTimeline(historyLogs);
 }
 
 // ── Reputation Intelligence ─────────────────────────────────────
@@ -610,10 +847,31 @@ function initReputation() {
       <h1>Reputation Intelligence</h1>
       <p>Persistent sender risk memory and escalations.</p>
     </div>
+    <div class="soc-grid dashboard-row dashboard-row-metrics">
+      <div class="soc-card metric-card">
+        <div class="metric-label">High Risk Senders</div>
+        <div class="metric-value" id="reputation-high-count">0</div>
+        <div class="metric-sub">Risk boost 0.25 and above</div>
+      </div>
+      <div class="soc-card metric-card">
+        <div class="metric-label">Medium Risk Senders</div>
+        <div class="metric-value" id="reputation-medium-count">0</div>
+        <div class="metric-sub">Risk boost between 0.10 and 0.24</div>
+      </div>
+      <div class="soc-card metric-card">
+        <div class="metric-label">Low Risk Senders</div>
+        <div class="metric-value" id="reputation-low-count">0</div>
+        <div class="metric-sub">Risk boost below 0.10</div>
+      </div>
+    </div>
+    <div class="soc-card alerts-card mt-16">
+      <div class="card-title">Top Suspicious Senders</div>
+      <div id="reputation-top-senders" class="alerts-stream"></div>
+    </div>
     <div class="soc-card">
       <div class="table-wrapper">
         <table>
-          <thead><tr><th>Sender ID</th><th>Detections</th><th>Risk Boost</th></tr></thead>
+          <thead><tr><th>Sender ID</th><th>Detections</th><th>Risk Boost</th><th>Risk</th></tr></thead>
           <tbody id="reputation-body"></tbody>
         </table>
       </div>
@@ -626,21 +884,21 @@ function initReputation() {
 async function refreshReputation() {
   if (activePage !== "reputation") return;
   try {
-    const db = await window.rei.readReputationDb();
-    const rows = Object.entries(db || {})
-      .map(([id, value]) => ({ id, count: Number(value?.count || 0), riskBoost: Number(value?.risk_boost || 0) }))
-      .sort((a, b) => b.count - a.count);
-    const body = document.getElementById("reputation-body");
-    if (!body) return;
-    body.innerHTML = rows.map((row) => `
-      <tr>
-        <td>${escHtml(row.id)}</td>
-        <td>${row.count}</td>
-        <td>${row.riskBoost.toFixed(2)}</td>
-      </tr>
-    `).join("") || `<tr><td colspan="3" class="empty-row">No reputation intelligence entries available.</td></tr>`;
+    const db = await getReputationDb();
+    renderReputation(db);
   } catch (error) {
     console.error("Reputation refresh error:", error);
+  }
+}
+
+// Optimized refresh using pre-pushed reputation data
+function refreshReputationWithData(db) {
+  if (activePage !== "reputation") return;
+  try {
+    latestReputationDb = db && typeof db === "object" ? db : {};
+    renderReputation(latestReputationDb);
+  } catch (error) {
+    console.error("Reputation refresh (pushed data) error:", error);
   }
 }
 
@@ -732,13 +990,8 @@ async function scanFile() {
   if (fileNameElement) fileNameElement.textContent = filePath;
 
   try {
-    const response = await fetch(filePath);
-    const blob = await response.blob();
-    const fileName = filePath.split(/[\\/]/).pop();
-    const formData = new FormData();
-    formData.append("file", blob, fileName);
-    const analyzeResponse = await fetch(`${API_BASE}/analyze-file`, { method: "POST", body: formData });
-    showScanResult(await analyzeResponse.json());
+    const result = await window.rei.analyzeFile(filePath);
+    showScanResult(result);
   } catch (error) {
     showScanResult({ detail: error.message });
   }
@@ -767,8 +1020,8 @@ async function refreshReports() {
   if (activePage !== "reports") return;
   try {
     const status = await getSystemStatus();
-    renderStatusCard("reports-scanner", "Scanner API", "scanner", statusModel({ online: !!status.scannerUp }), "Port 8000 health");
-    renderStatusCard("reports-monitor", "File Monitor", "monitor", statusModel({ online: !!status.monitorUp }), "Process/watchdog status");
+    renderStatusCard("reports-scanner", "Scanner API", "scanner", statusModel({ online: !!status.scannerOnline }), "Port 8000 health");
+    renderStatusCard("reports-monitor", "File Monitor", "monitor", statusModel({ online: !!status.monitorRunning }), "Process/watchdog status");
     const ext = extensionHealthFromStatus(status);
     renderStatusCard("reports-extension", "Extension", "extension", { label: ext.label, cls: ext.cls }, ext.subtitle);
     renderStatusCard(
@@ -785,28 +1038,54 @@ async function refreshReports() {
 
 // ── Settings ────────────────────────────────────────────────────
 function initSettings() {
+  const _t = window.reiI18n ? window.reiI18n.t : (k) => k;
   const page = document.getElementById("page-settings");
   page.innerHTML = `
     <div class="page-header">
-      <h1>Settings</h1>
-      <p>Runtime controls for scanner integrations.</p>
+      <h1 data-i18n="settings">${_t("settings")}</h1>
+      <p data-i18n="configure_preferences">${_t("configure_preferences")}</p>
     </div>
     <div class="soc-card">
       <div class="form-group">
-        <label for="set-vt-key">VirusTotal API Key</label>
+        <label for="set-vt-key" data-i18n="vt_api_key">${_t("vt_api_key")}</label>
         <input id="set-vt-key" class="form-input" type="password" />
       </div>
       <div class="toggle-grid">
-        <label class="toggle-item"><span>URL Scanning</span><input type="checkbox" id="tog-url" /></label>
-        <label class="toggle-item"><span>File Scanning</span><input type="checkbox" id="tog-file" /></label>
-        <label class="toggle-item"><span>Reputation Tracking</span><input type="checkbox" id="tog-rep" /></label>
+        <label class="toggle-item"><span data-i18n="url_scanning">${_t("url_scanning")}</span><input type="checkbox" id="tog-url" /></label>
+        <label class="toggle-item"><span data-i18n="file_scanning">${_t("file_scanning")}</span><input type="checkbox" id="tog-file" /></label>
+        <label class="toggle-item"><span data-i18n="reputation_tracking">${_t("reputation_tracking")}</span><input type="checkbox" id="tog-rep" /></label>
       </div>
-      <button class="btn btn-primary mt-12" id="btn-save-settings">Save Settings</button>
+      <button class="btn btn-primary mt-12" id="btn-save-settings" data-i18n="save_settings">${_t("save_settings")}</button>
       <div id="settings-msg" class="muted mt-8"></div>
+    </div>
+    <div class="soc-card mt-16">
+      <div class="card-title" data-i18n="language">${_t("language")}</div>
+      <p class="text-sm text-muted mb-8" data-i18n="language_desc">${_t("language_desc")}</p>
+      <select id="panelLanguageSelector" class="form-input" style="max-width:260px">
+        <option value="en">English</option>
+        <option value="hi">हिन्दी (Hindi)</option>
+        <option value="kn">ಕನ್ನಡ (Kannada)</option>
+        <option value="te">తెలుగు (Telugu)</option>
+        <option value="ml">മലയാളം (Malayalam)</option>
+        <option value="ta">தமிழ் (Tamil)</option>
+      </select>
     </div>
   `;
   loadSettings();
   document.getElementById("btn-save-settings").addEventListener("click", saveSettings);
+
+  // Language switcher
+  const langSel = document.getElementById("panelLanguageSelector");
+  if (langSel && window.reiI18n) {
+    langSel.value = window.reiI18n.getActiveLanguage();
+    langSel.addEventListener("change", async (e) => {
+      const lang = e.target.value;
+      await window.reiI18n.loadLanguage(lang);
+      await window.reiI18n.saveLanguagePreference(lang);
+      // Re-init current page to reflect new language
+      initSettings();
+    });
+  }
 }
 
 async function loadSettings() {
@@ -836,19 +1115,231 @@ async function saveSettings() {
   }
 }
 
-// ── Boot ────────────────────────────────────────────────────────
-if (typeof document !== "undefined" && document.getElementById) {
-  if (window.rei && typeof window.rei.onStatusUpdate === "function") {
-    window.rei.onStatusUpdate((payload) => {
-      latestSystemStatus = payload;
-      if (activePage === "dashboard") refreshOverview();
-      if (activePage === "protection") refreshProtection();
-      if (activePage === "reports") refreshReports();
-      updateHeaderStatus();
+// ── Demo Scam Data Injection ────────────────────────────────
+const DEMO_SCAM_ENTRIES = [
+  {
+    sender: "+919876543210",
+    email: "alerts@sbi-secure-support.in",
+    platform: "whatsapp",
+    risk_level: "HIGH",
+    risk_score: 0.9412,
+    explanations: [
+      "Impersonates SBI bank — fake domain sbi-secure-support.in",
+      "Urgency language: 'Your account will be blocked'",
+      "Phishing link to steal banking credentials",
+    ],
+    label: "SBI Phishing Scam",
+  },
+  {
+    sender: "+919812345678",
+    email: "kyc@upi-verification-help.in",
+    platform: "whatsapp",
+    risk_level: "HIGH",
+    risk_score: 0.8837,
+    explanations: [
+      "Fake KYC verification — domain upi-verification-help.in is not official",
+      "Requests sensitive personal documents (Aadhaar, PAN)",
+      "Threatens UPI account suspension to create panic",
+    ],
+    label: "KYC Verification Scam",
+  },
+  {
+    sender: "+918888123456",
+    email: "post@indiapost-delivery-help.in",
+    platform: "email",
+    risk_level: "MEDIUM",
+    risk_score: 0.7201,
+    explanations: [
+      "Impersonates India Post — fraudulent domain indiapost-delivery-help.in",
+      "Demands small payment to release a fake parcel",
+      "Payment link leads to credential-harvesting page",
+    ],
+    label: "India Post Payment Scam",
+  },
+  {
+    sender: "+917777654321",
+    email: "jobs@daily-earning-alerts.in",
+    platform: "whatsapp",
+    risk_level: "HIGH",
+    risk_score: 0.9105,
+    explanations: [
+      "Fake part-time job offer — promises unrealistic daily earnings",
+      "Domain daily-earning-alerts.in is newly registered",
+      "Requires upfront registration fee — classic advance-fee fraud",
+    ],
+    label: "Fake Part-Time Job Scam",
+  },
+];
+
+let demoInjected = false;
+
+function showDemoToast(entry) {
+  const existing = document.querySelector(".demo-toast");
+  if (existing) existing.remove();
+
+  const toast = document.createElement("div");
+  toast.className = "demo-toast";
+  toast.innerHTML = `
+    <div class="demo-toast-icon">⚠️</div>
+    <div class="demo-toast-text">
+      <div class="demo-toast-title">Threat Detected: ${escHtml(entry.label)}</div>
+      <div class="demo-toast-sub">${escHtml(entry.sender)} · ${escHtml(entry.email)}</div>
+    </div>
+  `;
+  document.body.appendChild(toast);
+
+  setTimeout(() => {
+    toast.classList.add("fade-out");
+    setTimeout(() => toast.remove(), 500);
+  }, 2500);
+}
+
+function bumpMetricCounters() {
+  const ids = ["metric-total-detections", "metric-medium-detections", "metric-high-detections"];
+  ids.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove("demo-bump");
+    void el.offsetWidth; // force reflow
+    el.classList.add("demo-bump");
+    setTimeout(() => el.classList.remove("demo-bump"), 600);
+  });
+}
+
+function injectDemoReputationEntry(entry) {
+  const senderId = entry.sender;
+  const emailId = entry.email;
+  const boost = entry.risk_score >= 0.8 ? 0.35 : 0.18;
+
+  if (!latestReputationDb[senderId]) {
+    latestReputationDb[senderId] = { count: 0, risk_boost: 0 };
+  }
+  latestReputationDb[senderId].count += 1;
+  latestReputationDb[senderId].risk_boost = Math.min(1, latestReputationDb[senderId].risk_boost + boost);
+
+  if (!latestReputationDb[emailId]) {
+    latestReputationDb[emailId] = { count: 0, risk_boost: 0 };
+  }
+  latestReputationDb[emailId].count += 1;
+  latestReputationDb[emailId].risk_boost = Math.min(1, latestReputationDb[emailId].risk_boost + boost);
+}
+
+function injectSingleDemoEntry(entry, index) {
+  const now = new Date();
+  now.setSeconds(now.getSeconds() - (DEMO_SCAM_ENTRIES.length - index));
+
+  const logEntry = {
+    timestamp: now.toISOString(),
+    sender: `${entry.sender} (${entry.email})`,
+    platform: entry.platform,
+    risk_level: entry.risk_level,
+    risk_score: entry.risk_score,
+    explanations: entry.explanations,
+  };
+
+  latestDetectionLog.unshift(logEntry);
+  injectDemoReputationEntry(entry);
+  showDemoToast(entry);
+  bumpMetricCounters();
+
+  // Re-render whichever page is active
+  if (activePage === "dashboard") {
+    renderOverview(latestDetectionLog, latestSystemStatus || {});
+    // Add animation class to newest alert row
+    requestAnimationFrame(() => {
+      const stream = document.getElementById("alerts-stream");
+      if (stream) {
+        const firstRow = stream.querySelector(".alert-row");
+        if (firstRow) firstRow.classList.add("demo-entry-animate");
+      }
     });
   }
-  startHeaderServices();
-  initPage("dashboard");
+  if (activePage === "history") {
+    renderThreatTimeline(latestDetectionLog);
+    requestAnimationFrame(() => {
+      const body = document.getElementById("history-body");
+      if (body && body.firstElementChild) {
+        body.firstElementChild.classList.add("demo-entry-animate");
+      }
+    });
+  }
+  if (activePage === "reputation") {
+    renderReputation(latestReputationDb);
+  }
+  if (activePage === "protection") {
+    renderProtection(latestDetectionLog, latestSystemStatus || {});
+    requestAnimationFrame(() => {
+      const container = document.getElementById("protection-recent-detections");
+      if (container) {
+        const firstRow = container.querySelector(".alert-row");
+        if (firstRow) firstRow.classList.add("demo-entry-animate");
+      }
+    });
+  }
+}
+
+function scheduleDemoInjection() {
+  if (demoInjected) return;
+  demoInjected = true;
+
+  const BASE_DELAY = 2000; // 2 seconds after boot
+  const STAGGER   = 700;   // 700ms between each entry
+
+  DEMO_SCAM_ENTRIES.forEach((entry, index) => {
+    setTimeout(() => {
+      injectSingleDemoEntry(entry, index);
+    }, BASE_DELAY + index * STAGGER);
+  });
+}
+
+// ── Boot ────────────────────────────────────────────────────────
+if (typeof document !== "undefined" && document.getElementById) {
+  // Initialize i18n first, then boot the app
+  const bootApp = async () => {
+    if (window.reiI18n && typeof window.reiI18n.initI18n === "function") {
+      await window.reiI18n.initI18n();
+    }
+
+    if (window.rei && typeof window.rei.onStatusUpdate === "function") {
+      window.rei.onStatusUpdate((payload) => {
+        latestSystemStatus = normalizeSystemStatus(payload);
+        if (activePage === "protection") renderProtection(latestDetectionLog, latestSystemStatus);
+        if (activePage === "reports") refreshReports();
+        if (activePage === "dashboard") renderOverview(latestDetectionLog, latestSystemStatus);
+        updateHeaderStatus();
+      });
+    }
+
+    // Subscribe to dashboard-refresh for live data push (log + reputation + status)
+    if (window.rei && typeof window.rei.onDashboardRefresh === "function") {
+      window.rei.onDashboardRefresh((data) => {
+        latestSystemStatus = normalizeSystemStatus(data);
+        latestDetectionLog = Array.isArray(data.log) ? data.log : [];
+        latestReputationDb = data.reputation && typeof data.reputation === "object" ? data.reputation : {};
+        updateHeaderStatus();
+
+        if (activePage === "dashboard") {
+          refreshOverviewWithData(latestDetectionLog, latestSystemStatus);
+        }
+        if (activePage === "reputation") {
+          refreshReputationWithData(latestReputationDb);
+        }
+        if (activePage === "history") {
+          refreshHistoryWithData(latestDetectionLog);
+        }
+        if (activePage === "protection") {
+          renderProtection(latestDetectionLog, latestSystemStatus);
+        }
+      });
+    }
+
+    startHeaderServices();
+    initPage("dashboard");
+
+    // Inject demo scam data after 2-3 seconds
+    scheduleDemoInjection();
+  };
+  bootApp();
 }
 
 // ── Testable factories ──────────────────────────────────────────
@@ -919,5 +1410,11 @@ function createStateBus() {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { createRouter, createStateBus };
+  module.exports = {
+    createRouter,
+    createStateBus,
+    sortDetectionsDescending,
+    buildDashboardMetrics,
+    buildReputationSummary,
+  };
 }

@@ -1,5 +1,8 @@
 {
   "extension_name": {
-    "message": "R.E.I. Risk Evaluation Intelligence"
+    "message": "R.E.I. जोखिम मूल्यांकन बुद्धिमत्ता"
+  },
+  "extension_description": {
+    "message": "स्थानीय AI और VirusTotal URL विश्लेषण द्वारा संचालित ऑफ़लाइन मल्टी-चैनल स्कैम डिटेक्शन और वेबसाइट जोखिम खुफिया सहायक।"
   }
 }

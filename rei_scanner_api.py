@@ -483,3 +483,9 @@ async def analyze_file(file: UploadFile = File(...)) -> dict[str, Any]:
         platform=f"file:{extension[1:]}",
     )
     return {"filename": filename, **result}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("rei_scanner_api:app", host="127.0.0.1", port=8000)

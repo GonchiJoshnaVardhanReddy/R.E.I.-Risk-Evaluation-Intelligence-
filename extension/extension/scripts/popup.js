@@ -12,7 +12,8 @@ function escHtml(str) {
 
 function renderUrlScanResult(result) {
   if (!result || !result.url) {
-    return `<div class="empty-state">No URL scanned yet. Browse any website to trigger a scan.</div>`;
+    const emptyMsg = typeof reiExtI18n !== "undefined" ? reiExtI18n.t("popup_url_scan_empty") : "No URL scanned yet. Browse any website to trigger a scan.";
+    return `<div class="empty-state">${escHtml(emptyMsg)}</div>`;
   }
 
   const level = (result.combined_risk_level || result.risk_level || "LOW").toLowerCase();
@@ -31,29 +32,29 @@ function renderUrlScanResult(result) {
       <div class="url-result-stats">
         <div class="url-stat">
           <span class="url-stat-value mal">${maliciousCount}</span>
-          <span class="url-stat-label">Malicious</span>
+           <span class="url-stat-label">${typeof reiExtI18n !== "undefined" ? escHtml(reiExtI18n.t("common_malicious")) : "Malicious"}</span>
         </div>
         <div class="url-stat">
           <span class="url-stat-value sus">${suspiciousCount}</span>
-          <span class="url-stat-label">Suspicious</span>
+           <span class="url-stat-label">${typeof reiExtI18n !== "undefined" ? escHtml(reiExtI18n.t("common_suspicious")) : "Suspicious"}</span>
         </div>
         <div class="url-stat">
           <span class="url-stat-value safe">${harmlessCount}</span>
-          <span class="url-stat-label">Harmless</span>
+           <span class="url-stat-label">${typeof reiExtI18n !== "undefined" ? escHtml(reiExtI18n.t("common_harmless")) : "Harmless"}</span>
         </div>
       </div>
       <div class="url-sources">
-        <h4>Source Attribution</h4>
+        <h4>${typeof reiExtI18n !== "undefined" ? escHtml(reiExtI18n.t("common_risk_source_attribution")) : "Source Attribution"}</h4>
         <div class="source-row">
           <span class="source-name">VirusTotal</span>
           <span class="source-badge ${vtLevel}">${(result.virustotal_risk_level || result.sources?.virustotal || "LOW").toUpperCase()}</span>
         </div>
         <div class="source-row">
-          <span class="source-name">R.E.I. Local Model</span>
+          <span class="source-name">${typeof reiExtI18n !== "undefined" ? escHtml(reiExtI18n.t("common_local_model")) : "R.E.I. Local Model"}</span>
           <span class="source-badge ${localLevel}">${(result.local_risk_level || result.sources?.rei_local_model || "LOW").toUpperCase()}</span>
         </div>
         <div class="source-row">
-          <span class="source-name">Local Model Score</span>
+          <span class="source-name">${typeof reiExtI18n !== "undefined" ? escHtml(reiExtI18n.t("common_local_model_score")) : "Local Model Score"}</span>
           <span class="source-badge ${localScoreLevel}">${localModelScore.toFixed(2)}</span>
         </div>
       </div>
@@ -63,7 +64,7 @@ function renderUrlScanResult(result) {
 
 function formatLatestUrlScanResult(result) {
   if (!result || !result.url) {
-    return "No URL scan result yet.";
+    return typeof reiExtI18n !== "undefined" ? reiExtI18n.t("popup_no_url_scan_result") : "No URL scan result yet.";
   }
   return [
     `URL: ${result.url}`,
@@ -92,13 +93,15 @@ function checkBackendStatus() {
   const heroTitle = document.getElementById("hero-title");
   const heroDesc = document.getElementById("hero-desc");
 
+  const _t = typeof reiExtI18n !== "undefined" ? reiExtI18n.t : (k) => k;
+
   fetch("http://127.0.0.1:8000/docs", { method: "GET", signal: AbortSignal.timeout(3000) })
     .then((res) => {
       if (res.ok) {
         badge.classList.remove("offline");
-        statusText.textContent = "ENGINE ONLINE";
-        heroTitle.textContent = "All Channels Protected";
-        heroDesc.textContent = "Real-time AI monitoring active for WhatsApp, Gmail & Outlook.";
+        statusText.textContent = _t("popup_status_online");
+        heroTitle.textContent = _t("popup_hero_online_title");
+        heroDesc.textContent = _t("popup_hero_online_desc");
       } else {
         setOffline();
       }
@@ -107,16 +110,25 @@ function checkBackendStatus() {
 
   function setOffline() {
     badge.classList.add("offline");
-    statusText.textContent = "ENGINE OFFLINE";
-    heroTitle.textContent = "Scanner Offline";
-    heroDesc.textContent = "Start the R.E.I. Scanner API to enable protection.";
+    statusText.textContent = _t("popup_status_offline");
+    heroTitle.textContent = _t("popup_hero_offline_title");
+    heroDesc.textContent = _t("popup_hero_offline_desc");
   }
 }
 
 // ── DOM Ready ───────────────────────────────────────────────────
 
 if (typeof document !== "undefined") {
-  document.addEventListener("DOMContentLoaded", () => {
+  document.addEventListener("DOMContentLoaded", async () => {
+    // Initialize i18n
+    if (typeof reiExtI18n !== "undefined") {
+      const lang = await reiExtI18n.initI18n();
+      reiExtI18n.applyI18nToDOM();
+      // Set language selector to current language
+      const langSelector = document.getElementById("language-selector");
+      if (langSelector) langSelector.value = lang;
+    }
+
     checkBackendStatus();
     updateStats();
     loadSettings();
@@ -146,17 +158,17 @@ if (typeof document !== "undefined") {
       const text = scanInput.value.trim();
       if (!text) return;
       scanBtn.disabled = true;
-      scanBtn.innerText = "Analyzing…";
+      scanBtn.innerText = typeof reiExtI18n !== "undefined" ? reiExtI18n.t("popup_scan_analyzing") : "Analyzing…";
 
       chrome.runtime.sendMessage({ action: "analyzeMessage", text }, (response) => {
         scanBtn.disabled = false;
-        scanBtn.innerText = "🔍 Analyze Message";
+        scanBtn.innerText = typeof reiExtI18n !== "undefined" ? reiExtI18n.t("popup_scan_button") : "🔍 Analyze Message";
 
         if (response && response.status === "success") {
           showResult(response.data);
           updateStats();
         } else {
-          showError("Scanner offline. Start the R.E.I. backend first.");
+          showError(typeof reiExtI18n !== "undefined" ? reiExtI18n.t("popup_scan_error") : "Scanner offline. Start the R.E.I. backend first.");
         }
       });
     });
@@ -170,7 +182,7 @@ if (typeof document !== "undefined") {
       chrome.storage.local.set({ vt_api_key: key }, () => {
         const msg = document.getElementById("vt-save-msg");
         msg.className = "save-msg success";
-        msg.textContent = "✓ API key saved";
+        msg.textContent = typeof reiExtI18n !== "undefined" ? reiExtI18n.t("popup_vt_saved") : "✓ API key saved";
         setTimeout(() => { msg.textContent = ""; }, 3000);
       });
     });
@@ -179,6 +191,15 @@ if (typeof document !== "undefined") {
     document.querySelectorAll(".toggle").forEach((toggle) => {
       toggle.addEventListener("click", () => toggle.classList.toggle("active"));
     });
+
+    // Language switcher
+    const langSelector = document.getElementById("language-selector");
+    if (langSelector && typeof reiExtI18n !== "undefined") {
+      langSelector.addEventListener("change", async (e) => {
+        await reiExtI18n.setLanguage(e.target.value);
+        checkBackendStatus();
+      });
+    }
   });
 }
 
@@ -220,7 +241,8 @@ function updateHistoryUI(history) {
   const list = document.getElementById("history-list");
   if (!list) return;
   if (!history || history.length === 0) {
-    list.innerHTML = `<div class="empty-state">No scans yet — browse WhatsApp, Gmail, or Outlook to start.</div>`;
+    const emptyText = typeof reiExtI18n !== "undefined" ? reiExtI18n.t("popup_history_empty") : "No scans yet — browse WhatsApp, Gmail, or Outlook to start.";
+    list.innerHTML = `<div class="empty-state">${escHtml(emptyText)}</div>`;
     return;
   }
 
@@ -250,12 +272,13 @@ function showResult(data) {
   container.classList.remove("hidden");
 
   const levelClass = `risk-${level}`;
-  const reasons = data.reasons || data.explanations || ["No red flags detected"];
+  const defaultReason = typeof reiExtI18n !== "undefined" ? reiExtI18n.t("popup_no_red_flags") : "No red flags detected";
+  const reasons = data.reasons || data.explanations || [defaultReason];
 
   container.innerHTML = `
     <div class="result-header">
       <strong class="${levelClass}">${(data.risk_level || "LOW").toUpperCase()} RISK</strong>
-      <span class="score-badge">${data.score || 0}% confidence</span>
+      <span class="score-badge">${data.score || 0}% ${typeof reiExtI18n !== "undefined" ? escHtml(reiExtI18n.t("common_confidence")) : "confidence"}</span>
     </div>
     <ul class="reasons">
       ${reasons.map((r) => `<li>${escHtml(r)}</li>`).join("")}

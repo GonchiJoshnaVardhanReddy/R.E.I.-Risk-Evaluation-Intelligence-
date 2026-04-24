@@ -10,7 +10,11 @@ const require = createRequire(import.meta.url);
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const {
   inferExtensionConnectivity,
+  inferMonitorRunning,
+  inferScannerOnline,
   detectionLogRecentlyUpdated,
+  buildStatusPayload,
+  getPythonCandidates,
   mergeSettings,
   isSupportedPlatformEvent,
   canStopExternalProcess,
@@ -57,6 +61,108 @@ test("inferExtensionConnectivity supports metadata.last_extension_activity times
   const result = inferExtensionConnectivity(entries, now, 2);
   assert.equal(result.connected, true);
   assert.equal(result.lastExtensionEventAt, "2026-04-20T23:59:30.000Z");
+});
+
+test("inferMonitorRunning treats recent file detections as an active monitor fallback", () => {
+  const now = new Date("2026-04-21T00:00:10Z").getTime();
+  const entries = [
+    { platform: "email", timestamp: "2026-04-21T00:00:05Z" },
+    { platform: "file:pdf", timestamp: "2026-04-21T00:00:04Z" }
+  ];
+  assert.equal(
+    inferMonitorRunning({
+      processRunning: false,
+      entries,
+      nowMs: now,
+      thresholdSeconds: 10
+    }),
+    true
+  );
+});
+
+test("inferMonitorRunning ignores stale and non-file activity when process is absent", () => {
+  const now = new Date("2026-04-21T00:00:20Z").getTime();
+  const entries = [
+    { platform: "whatsapp", timestamp: "2026-04-21T00:00:15Z" },
+    { platform: "file:pdf", timestamp: "2026-04-21T00:00:00Z" }
+  ];
+  assert.equal(
+    inferMonitorRunning({
+      processRunning: false,
+      entries,
+      nowMs: now,
+      thresholdSeconds: 10
+    }),
+    false
+  );
+});
+
+test("inferScannerOnline falls back to recent detection activity for demo continuity", () => {
+  const now = new Date("2026-04-21T00:10:00Z").getTime();
+  const entries = [
+    { platform: "email", timestamp: "2026-04-21T00:07:30Z" }
+  ];
+  assert.equal(
+    inferScannerOnline({
+      portReachable: false,
+      entries,
+      nowMs: now,
+      thresholdMinutes: 5
+    }),
+    true
+  );
+});
+
+test("inferScannerOnline stays offline when endpoint is down and detections are stale", () => {
+  const now = new Date("2026-04-21T00:10:00Z").getTime();
+  const entries = [
+    { platform: "email", timestamp: "2026-04-21T00:01:00Z" }
+  ];
+  assert.equal(
+    inferScannerOnline({
+      portReachable: false,
+      entries,
+      nowMs: now,
+      thresholdMinutes: 5
+    }),
+    false
+  );
+});
+
+test("buildStatusPayload publishes required runtime keys and backward-compatible aliases", () => {
+  const payload = buildStatusPayload({
+    scannerOnline: true,
+    monitorRunning: false,
+    extensionActive: true,
+    detLogExists: true,
+    repDbExists: false,
+    lastExtensionEventAt: "2026-04-21T00:00:00.000Z"
+  });
+
+  assert.equal(payload.scannerOnline, true);
+  assert.equal(payload.monitorRunning, false);
+  assert.equal(payload.extensionActive, true);
+  assert.equal(payload.scannerUp, true);
+  assert.equal(payload.monitorUp, false);
+  assert.equal(payload.extensionConnected, true);
+  assert.equal(payload.detLogExists, true);
+  assert.equal(payload.repDbExists, false);
+  assert.equal(payload.lastExtensionEventAt, "2026-04-21T00:00:00.000Z");
+});
+
+test("getPythonCandidates prefers explicit env overrides and common local runtimes", () => {
+  const candidates = getPythonCandidates(
+    {
+      REI_PYTHON_EXE: "D:\\custom\\python.exe",
+      LOCALAPPDATA: "C:\\Users\\gonch\\AppData\\Local",
+    },
+    "C:\\Users\\gonch",
+  );
+
+  assert.equal(candidates[0].command, "D:\\custom\\python.exe");
+  assert.deepEqual(candidates[0].args, []);
+  assert.ok(candidates.some((candidate) => candidate.command === "C:\\Users\\gonch\\miniconda3\\envs\\scamshield\\python.exe"));
+  assert.ok(candidates.some((candidate) => candidate.command === "C:\\Users\\gonch\\AppData\\Local\\Programs\\Python\\Python314\\python.exe"));
 });
 
 test("detectionLogRecentlyUpdated returns true for recent mtime", () => {

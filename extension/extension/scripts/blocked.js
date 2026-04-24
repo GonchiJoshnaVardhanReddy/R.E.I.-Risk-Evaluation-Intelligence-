@@ -80,4 +80,10 @@ function initBlockedPage() {
   }
 }
 
-document.addEventListener("DOMContentLoaded", initBlockedPage);
+document.addEventListener("DOMContentLoaded", async () => {
+  if (typeof reiExtI18n !== "undefined") {
+    await reiExtI18n.initI18n();
+    reiExtI18n.applyI18nToDOM();
+  }
+  initBlockedPage();
+});

@@ -16,29 +16,29 @@
         <div class="logo-icon">R</div>
         <div class="logo-text">
           <span class="logo-title">R.E.I.</span>
-          <span class="logo-sub">Risk Evaluation Intelligence</span>
+          <span class="logo-sub" data-i18n="popup_logo_subtitle">Risk Evaluation Intelligence</span>
         </div>
       </div>
       <div class="status-badge" id="service-status">
         <span class="pulse"></span>
-        <span id="status-text">CHECKING…</span>
+        <span id="status-text" data-i18n="popup_status_checking">CHECKING…</span>
       </div>
     </header>
 
     <!-- ═══ Tabs ═══ -->
     <nav class="tabs">
-      <button class="tab-btn active" data-tab="status">Dashboard</button>
-      <button class="tab-btn" data-tab="url-scan">URL Scan</button>
-      <button class="tab-btn" data-tab="settings">Settings</button>
+      <button class="tab-btn active" data-tab="status" data-i18n="popup_tab_dashboard">Dashboard</button>
+      <button class="tab-btn" data-tab="url-scan" data-i18n="popup_tab_url_scan">URL Scan</button>
+      <button class="tab-btn" data-tab="settings" data-i18n="popup_tab_settings">Settings</button>
     </nav>
 
     <!-- ═══ Dashboard Tab ═══ -->
     <main id="tab-status">
       <div class="hero-card">
         <div class="hero-content">
-          <span class="label">PROTECTION STATUS</span>
-          <h2 id="hero-title">Initializing…</h2>
-          <p id="hero-desc">Connecting to local AI scanner…</p>
+          <span class="label" data-i18n="popup_protection_status_label">PROTECTION STATUS</span>
+          <h2 id="hero-title" data-i18n="popup_hero_initializing">Initializing…</h2>
+          <p id="hero-desc" data-i18n="popup_hero_connecting">Connecting to local AI scanner…</p>
         </div>
         <div class="protection-glow"></div>
       </div>
@@ -46,23 +46,23 @@
       <div class="stats-grid">
         <div class="stat-card">
           <span class="stat-value" id="messages-scanned">0</span>
-          <span class="stat-label">Scanned</span>
+          <span class="stat-label" data-i18n="popup_stat_scanned">Scanned</span>
         </div>
         <div class="stat-card danger">
           <span class="stat-value" id="threats-blocked">0</span>
-          <span class="stat-label">Risks</span>
+          <span class="stat-label" data-i18n="popup_stat_risks">Risks</span>
         </div>
         <div class="stat-card safe">
           <span class="stat-value" id="trust-score">100%</span>
-          <span class="stat-label">Safety</span>
+          <span class="stat-label" data-i18n="popup_stat_safety">Safety</span>
         </div>
       </div>
 
       <div class="action-section">
-        <h3>Quick Scan</h3>
+        <h3 data-i18n="popup_quick_scan_title">Quick Scan</h3>
         <div class="input-group">
-          <textarea id="scan-input" placeholder="Paste a suspicious message to analyze…"></textarea>
-          <button id="scan-btn" class="primary-btn">🔍 Analyze Message</button>
+          <textarea id="scan-input" placeholder="Paste a suspicious message to analyze…" data-i18n-placeholder="popup_scan_placeholder"></textarea>
+          <button id="scan-btn" class="primary-btn" data-i18n="popup_scan_button">🔍 Analyze Message</button>
         </div>
       </div>
 
@@ -70,10 +70,10 @@
 
       <div class="recent-section">
         <div class="section-header">
-          <h3>Recent Scans</h3>
+          <h3 data-i18n="popup_recent_scans">Recent Scans</h3>
         </div>
         <div class="alert-list" id="history-list">
-          <div class="empty-state">No scans yet — browse WhatsApp, Gmail, or Outlook to start.</div>
+          <div class="empty-state" data-i18n="popup_history_empty">No scans yet — browse WhatsApp, Gmail, or Outlook to start.</div>
         </div>
       </div>
     </main>
@@ -81,9 +81,9 @@
     <!-- ═══ URL Scan Tab ═══ -->
     <main id="tab-url-scan" class="hidden">
       <div class="settings-card">
-        <h3>Latest URL Scan Result</h3>
+        <h3 data-i18n="popup_url_scan_title">Latest URL Scan Result</h3>
         <div id="url-scan-display" class="url-scan-result">
-          <div class="empty-state">No URL scanned yet. Browse any website to trigger a scan.</div>
+          <div class="empty-state" data-i18n="popup_url_scan_empty">No URL scanned yet. Browse any website to trigger a scan.</div>
         </div>
       </div>
     </main>
@@ -91,29 +91,44 @@
     <!-- ═══ Settings Tab ═══ -->
     <main id="tab-settings" class="hidden">
       <div class="settings-card">
-        <h3>VirusTotal Integration</h3>
-        <p class="settings-hint">API key required for real-time website URL intelligence scanning.</p>
+        <h3 data-i18n="popup_settings_vt_title">VirusTotal Integration</h3>
+        <p class="settings-hint" data-i18n="popup_settings_vt_hint">API key required for real-time website URL intelligence scanning.</p>
         <div class="input-group">
-          <label for="vt-api-key">API Key</label>
+          <label for="vt-api-key" data-i18n="popup_settings_vt_label">API Key</label>
           <input type="password" id="vt-api-key" placeholder="Enter your VirusTotal API Key" />
-          <button id="save-vt-key" class="primary-btn">💾 Save Key</button>
+          <button id="save-vt-key" class="primary-btn" data-i18n="popup_settings_vt_save">💾 Save Key</button>
         </div>
         <div id="vt-save-msg" class="save-msg"></div>
       </div>
 
       <div class="settings-card">
-        <h3>Scan Toggles</h3>
+        <h3 data-i18n="popup_language_label">Language</h3>
+        <div class="input-group">
+          <label for="language-selector" data-i18n="popup_language_label">Language</label>
+          <select id="language-selector">
+            <option value="en">English</option>
+            <option value="hi">हिन्दी (Hindi)</option>
+            <option value="kn">ಕನ್ನಡ (Kannada)</option>
+            <option value="te">తెలుగు (Telugu)</option>
+            <option value="ml">മലയാളം (Malayalam)</option>
+            <option value="ta">தமிழ் (Tamil)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <h3 data-i18n="popup_settings_scan_toggles">Scan Toggles</h3>
         <div class="feature-toggle">
           <div>
-            <span class="toggle-label">Scan websites on navigation</span>
-            <span class="toggle-desc">Automatic VirusTotal + local model fusion</span>
+            <span class="toggle-label" data-i18n="popup_toggle_url_scan_label">Scan websites on navigation</span>
+            <span class="toggle-desc" data-i18n="popup_toggle_url_scan_desc">Automatic VirusTotal + local model fusion</span>
           </div>
           <div class="toggle active" id="url-scan-toggle"></div>
         </div>
         <div class="feature-toggle">
           <div>
-            <span class="toggle-label">Heuristic keyword analysis</span>
-            <span class="toggle-desc">Check messages for suspicious patterns</span>
+            <span class="toggle-label" data-i18n="popup_toggle_heuristic_label">Heuristic keyword analysis</span>
+            <span class="toggle-desc" data-i18n="popup_toggle_heuristic_desc">Check messages for suspicious patterns</span>
           </div>
           <div class="toggle active"></div>
         </div>
@@ -122,10 +137,11 @@
 
     <!-- ═══ Footer ═══ -->
     <footer>
-      <span class="footer-text">R.E.I. v1.0.0 — Local AI + VirusTotal Fusion</span>
+      <span class="footer-text" data-i18n="popup_footer">R.E.I. v1.0.0 — Local AI + VirusTotal Fusion</span>
     </footer>
   </div>
 
+  <script src="scripts/i18n.js"></script>
   <script src="scripts/popup.js"></script>
 </body>
 </html>

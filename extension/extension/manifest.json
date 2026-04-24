@@ -3,7 +3,7 @@
   "name": "__MSG_extension_name__",
   "default_locale": "en",
   "version": "1.0.0",
-  "description": "Offline multi-channel scam detection and website risk intelligence assistant powered by local AI and VirusTotal URL analysis.",
+  "description": "__MSG_extension_description__",
   "permissions": [
     "storage",
     "tabs",
@@ -35,7 +35,7 @@
         "https://mail.google.com/*",
         "https://outlook.live.com/*"
       ],
-      "js": ["scripts/content.js"],
+      "js": ["scripts/i18n.js", "scripts/content.js"],
       "css": ["styles/content.css"],
       "run_at": "document_idle"
     }

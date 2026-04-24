@@ -8,6 +8,7 @@ const testDir = path.dirname(fileURLToPath(import.meta.url));
 const appDir = path.resolve(testDir, "..");
 const packagePath = path.join(appDir, "package.json");
 const mainPath = path.join(appDir, "main.js");
+const preloadPath = path.join(appDir, "preload.js");
 
 test("package.json defines start script and windows build target", async () => {
   const raw = await readFile(packagePath, "utf8");
@@ -35,4 +36,12 @@ test("main.js includes secure BrowserWindow options", async () => {
   assert.match(raw, /nodeIntegration:\s*false/u);
   assert.match(raw, /contextIsolation:\s*true/u);
   assert.match(raw, /title:\s*"R\.E\.I\. Control Center"/u);
+});
+
+test("preload.js avoids sandbox-incompatible os import and exposes panel IPC bridge", async () => {
+  const raw = await readFile(preloadPath, "utf8");
+  assert.doesNotMatch(raw, /require\(['"]os['"]\)/u);
+  assert.match(raw, /readDetectionLog:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('read-detection-log'\)/u);
+  assert.match(raw, /readReputationDb:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('read-reputation-db'\)/u);
+  assert.match(raw, /getSystemStatus:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('get-system-status'\)/u);
 });

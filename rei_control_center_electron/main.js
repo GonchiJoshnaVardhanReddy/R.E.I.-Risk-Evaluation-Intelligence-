@@ -5,6 +5,7 @@
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
+const os = require("os");
 const { spawn, execFile } = require("child_process");
 
 // ── Testable helpers (exported at bottom) ───────────────────
@@ -18,9 +19,17 @@ const SETTINGS_DEFAULTS = {
 const MONITOR_ACTIVITY_WINDOW_SECONDS = 10;
 const EXTENSION_ACTIVITY_WINDOW_MINUTES = 2;
 const STATUS_BROADCAST_INTERVAL_MS = 3000;
+const SCANNER_SCRIPT = "rei_scanner_api.py";
+const MONITOR_SCRIPT = "file_monitor.py";
+const PYTHON_COMMAND = process.platform === "win32" ? "python" : "python3";
+const PYTHON_IMPORT_PROBE = "import torch, fastapi, transformers, uvicorn";
 
 function isSupportedPlatformEvent(platform) {
   return platform === "whatsapp" || platform === "email";
+}
+
+function isFilePlatformEvent(platform) {
+  return typeof platform === "string" && platform.toLowerCase().startsWith("file");
 }
 
 function inferExtensionConnectivity(entries, nowMs, minutesThreshold) {
@@ -62,6 +71,99 @@ function inferExtensionConnectivity(entries, nowMs, minutesThreshold) {
 function detectionLogRecentlyUpdated(mtimeMs, nowMs = Date.now(), thresholdSeconds = MONITOR_ACTIVITY_WINDOW_SECONDS) {
   if (!Number.isFinite(mtimeMs) || mtimeMs <= 0) return false;
   return (nowMs - mtimeMs) <= thresholdSeconds * 1000;
+}
+
+function inferMonitorRunning({
+  processRunning,
+  entries,
+  nowMs = Date.now(),
+  thresholdSeconds = MONITOR_ACTIVITY_WINDOW_SECONDS,
+}) {
+  if (processRunning) return true;
+  const safeEntries = Array.isArray(entries) ? entries : [];
+  const thresholdMs = thresholdSeconds * 1000;
+  let latestFileEventTs = null;
+
+  for (const entry of safeEntries) {
+    if (!entry || typeof entry !== "object") continue;
+    if (!isFilePlatformEvent(entry.platform)) continue;
+    const ts = new Date(entry.timestamp).getTime();
+    if (!Number.isFinite(ts)) continue;
+    if (latestFileEventTs === null || ts > latestFileEventTs) {
+      latestFileEventTs = ts;
+    }
+  }
+
+  if (latestFileEventTs === null) return false;
+  return (nowMs - latestFileEventTs) <= thresholdMs;
+}
+
+function inferScannerOnline({
+  portReachable,
+  entries,
+  nowMs = Date.now(),
+  thresholdMinutes = 5,
+}) {
+  if (portReachable) return true;
+  const safeEntries = Array.isArray(entries) ? entries : [];
+  const thresholdMs = thresholdMinutes * 60 * 1000;
+  let latestDetectionTs = null;
+
+  for (const entry of safeEntries) {
+    if (!entry || typeof entry !== "object") continue;
+    const ts = new Date(entry.timestamp).getTime();
+    if (!Number.isFinite(ts)) continue;
+    if (latestDetectionTs === null || ts > latestDetectionTs) {
+      latestDetectionTs = ts;
+    }
+  }
+
+  if (latestDetectionTs === null) return false;
+  return (nowMs - latestDetectionTs) <= thresholdMs;
+}
+
+function buildStatusPayload({
+  scannerOnline,
+  monitorRunning,
+  extensionActive,
+  lastExtensionEventAt = null,
+  detLogExists = false,
+  repDbExists = false,
+}) {
+  return {
+    scannerOnline: !!scannerOnline,
+    monitorRunning: !!monitorRunning,
+    extensionActive: !!extensionActive,
+    scannerUp: !!scannerOnline,
+    monitorUp: !!monitorRunning,
+    extensionConnected: !!extensionActive,
+    lastExtensionEventAt,
+    detLogExists: !!detLogExists,
+    repDbExists: !!repDbExists,
+  };
+}
+
+function getPythonCandidates(env = process.env, homeDir = os.homedir()) {
+  const localAppData = env.LOCALAPPDATA || path.join(homeDir, "AppData", "Local");
+  const preferredCommands = [
+    { command: env.REI_PYTHON_EXE, args: [] },
+    { command: path.join(homeDir, "miniconda3", "envs", "scamshield", "python.exe"), args: [] },
+    { command: path.join(localAppData, "Programs", "Python", "Python314", "python.exe"), args: [] },
+    { command: path.join(localAppData, "Programs", "Python", "Python313", "python.exe"), args: [] },
+    { command: path.join(localAppData, "Programs", "Python", "Python312", "python.exe"), args: [] },
+    { command: PYTHON_COMMAND, args: [] },
+    ...(process.platform === "win32" ? [{ command: "py", args: ["-3"] }] : []),
+  ].filter((candidate) => typeof candidate.command === "string" && candidate.command.trim());
+
+  const uniqueCandidates = [];
+  const seen = new Set();
+  for (const candidate of preferredCommands) {
+    const key = `${candidate.command} ${candidate.args.join(" ")}`.trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniqueCandidates.push(candidate);
+  }
+  return uniqueCandidates;
 }
 
 function mergeSettings(overrides) {
@@ -176,7 +278,8 @@ try {
 const PROJECT_ROOT = resolveProjectRoot(false, "");
 const DETECTION_LOG = path.join(PROJECT_ROOT, "detection_log.json");
 const REPUTATION_DB = path.join(PROJECT_ROOT, "reputation_db.json");
-const FILE_MONITOR = path.join(PROJECT_ROOT, "file_monitor.py");
+const FILE_MONITOR = path.join(PROJECT_ROOT, MONITOR_SCRIPT);
+const SCANNER_API = path.join(PROJECT_ROOT, SCANNER_SCRIPT);
 
 // ── electron-store (ESM module — lazy loaded) ───────────────
 let store = null;
@@ -192,6 +295,7 @@ let scannerProcess = null;
 let monitorProcess = null;
 let mainWindow = null;
 let statusBroadcastTimer = null;
+let resolvedPythonCandidatePromise = null;
 
 // ── Helpers ─────────────────────────────────────────────────
 function readJsonSafe(filePath, fallback) {
@@ -212,6 +316,49 @@ function isPortReachable(port, host = "127.0.0.1", timeout = 2000) {
     req.on("error", () => resolve(false));
     req.on("timeout", () => { req.destroy(); resolve(false); });
   });
+}
+
+function isManagedProcessAlive(child) {
+  return !!child && child.exitCode === null && !child.killed;
+}
+
+function candidatePathExists(command) {
+  if (!command) return false;
+  if (!path.isAbsolute(command)) return true;
+  return fs.existsSync(command);
+}
+
+function canUsePythonCandidate(candidate) {
+  if (!candidatePathExists(candidate.command)) {
+    return Promise.resolve(false);
+  }
+
+  return new Promise((resolve) => {
+    execFile(
+      candidate.command,
+      [...candidate.args, "-c", PYTHON_IMPORT_PROBE],
+      { windowsHide: true, timeout: 8000 },
+      (error) => resolve(!error),
+    );
+  });
+}
+
+async function resolvePythonCandidate() {
+  if (resolvedPythonCandidatePromise) {
+    return resolvedPythonCandidatePromise;
+  }
+
+  resolvedPythonCandidatePromise = (async () => {
+    const candidates = getPythonCandidates();
+    for (const candidate of candidates) {
+      if (await canUsePythonCandidate(candidate)) {
+        return candidate;
+      }
+    }
+    return { command: PYTHON_COMMAND, args: [] };
+  })();
+
+  return resolvedPythonCandidatePromise;
 }
 
 function processListContains(marker) {
@@ -238,40 +385,42 @@ function processListContains(marker) {
   });
 }
 
-function detectionLogRecentlyUpdatedFromDisk() {
-  try {
-    const mtimeMs = fs.statSync(DETECTION_LOG).mtimeMs;
-    return detectionLogRecentlyUpdated(mtimeMs, Date.now(), MONITOR_ACTIVITY_WINDOW_SECONDS);
-  } catch {
-    return false;
-  }
-}
-
 async function isFileMonitorRunning() {
-  const hasMonitorProcess = await processListContains("file_monitor.py");
-  if (hasMonitorProcess) return true;
-  return detectionLogRecentlyUpdatedFromDisk();
+  const hasMonitorProcess = isManagedProcessAlive(monitorProcess) || await processListContains(MONITOR_SCRIPT);
+  const detectionEntries = readJsonSafe(DETECTION_LOG, []);
+  return inferMonitorRunning({
+    processRunning: hasMonitorProcess,
+    entries: detectionEntries,
+    nowMs: Date.now(),
+    thresholdSeconds: MONITOR_ACTIVITY_WINDOW_SECONDS,
+  });
 }
 
 async function buildSystemStatus() {
-  const scannerUp = await isPortReachable(8000);
-  const monitorUp = await isFileMonitorRunning();
+  const portReachable = await isPortReachable(8000);
   const detLogExists = fs.existsSync(DETECTION_LOG);
   const repDbExists = fs.existsSync(REPUTATION_DB);
   const detectionEntries = detLogExists ? readJsonSafe(DETECTION_LOG, []) : [];
+  const scannerOnline = inferScannerOnline({
+    portReachable,
+    entries: detectionEntries,
+    nowMs: Date.now(),
+    thresholdMinutes: 5,
+  });
+  const monitorRunning = await isFileMonitorRunning();
   const extensionConnectivity = inferExtensionConnectivity(
     Array.isArray(detectionEntries) ? detectionEntries : [],
     Date.now(),
     EXTENSION_ACTIVITY_WINDOW_MINUTES,
   );
-  return {
-    scannerUp,
-    monitorUp,
+  return buildStatusPayload({
+    scannerOnline,
+    monitorRunning,
+    extensionActive: extensionConnectivity.connected,
+    lastExtensionEventAt: extensionConnectivity.lastExtensionEventAt,
     detLogExists,
     repDbExists,
-    extensionConnected: extensionConnectivity.connected,
-    lastExtensionEventAt: extensionConnectivity.lastExtensionEventAt,
-  };
+  });
 }
 
 async function pushStatusUpdate() {
@@ -279,6 +428,15 @@ async function pushStatusUpdate() {
   try {
     const payload = await buildSystemStatus();
     mainWindow.webContents.send("status-update", payload);
+
+    // Push full dashboard data alongside status for live refresh
+    const log = readJsonSafe(DETECTION_LOG, []);
+    const reputation = readJsonSafe(REPUTATION_DB, {});
+    mainWindow.webContents.send("dashboard-refresh", {
+      log,
+      reputation,
+      ...payload,
+    });
   } catch (error) {
     console.error("[Status] push failed:", error);
   }
@@ -298,38 +456,60 @@ function stopStatusBroadcast() {
 }
 
 // ── Service Management ──────────────────────────────────────
-function startScannerApi() {
-  if (scannerProcess) return;
+function attachProcessLogging(child, label, resetProcessRef) {
+  child.stdout?.on("data", (data) => console.log(`[${label}]`, data.toString().trim()));
+  child.stderr?.on("data", (data) => console.error(`[${label}]`, data.toString().trim()));
+  child.on("close", (code) => {
+    console.log(`[${label}] exited ${code}`);
+    resetProcessRef();
+  });
+  child.on("error", (error) => {
+    console.error(`[${label}] spawn error:`, error);
+    resetProcessRef();
+  });
+}
+
+async function spawnPythonProcess(scriptPath, label, setProcessRef) {
   try {
-    scannerProcess = spawn("uvicorn", ["rei_scanner_api:app", "--reload", "--host", "127.0.0.1", "--port", "8000"], {
+    const pythonCandidate = await resolvePythonCandidate();
+    const child = spawn(pythonCandidate.command, [...pythonCandidate.args, scriptPath], {
       cwd: PROJECT_ROOT,
-      shell: true,
+      detached: false,
+      shell: false,
       stdio: "pipe",
+      windowsHide: true,
     });
-    scannerProcess.stdout?.on("data", (d) => console.log("[Scanner]", d.toString().trim()));
-    scannerProcess.stderr?.on("data", (d) => console.error("[Scanner]", d.toString().trim()));
-    scannerProcess.on("close", (code) => { console.log(`[Scanner] exited ${code}`); scannerProcess = null; });
-    scannerProcess.on("error", (err) => { console.error("[Scanner] spawn error:", err); scannerProcess = null; });
-  } catch (e) {
-    console.error("[Scanner] Failed to start:", e);
+    setProcessRef(child);
+    attachProcessLogging(child, label, () => setProcessRef(null));
+    return child;
+  } catch (error) {
+    console.error(`[${label}] Failed to start:`, error);
+    setProcessRef(null);
+    return null;
   }
 }
 
-function startFileMonitor() {
-  if (monitorProcess) return;
-  try {
-    monitorProcess = spawn("python", [FILE_MONITOR], {
-      cwd: PROJECT_ROOT,
-      shell: true,
-      stdio: "pipe",
-    });
-    monitorProcess.stdout?.on("data", (d) => console.log("[Monitor]", d.toString().trim()));
-    monitorProcess.stderr?.on("data", (d) => console.error("[Monitor]", d.toString().trim()));
-    monitorProcess.on("close", (code) => { console.log(`[Monitor] exited ${code}`); monitorProcess = null; });
-    monitorProcess.on("error", (err) => { console.error("[Monitor] spawn error:", err); monitorProcess = null; });
-  } catch (e) {
-    console.error("[Monitor] Failed to start:", e);
-  }
+async function ensureScannerApi() {
+  if (isManagedProcessAlive(scannerProcess)) return;
+  if (await isPortReachable(8000)) return;
+  await spawnPythonProcess(SCANNER_API, "Scanner", (child) => {
+    scannerProcess = child;
+  });
+}
+
+async function ensureFileMonitor() {
+  if (isManagedProcessAlive(monitorProcess)) return;
+  if (await processListContains(MONITOR_SCRIPT)) return;
+  await spawnPythonProcess(FILE_MONITOR, "Monitor", (child) => {
+    monitorProcess = child;
+  });
+}
+
+async function ensureServices() {
+  await Promise.all([
+    ensureScannerApi(),
+    ensureFileMonitor(),
+  ]);
 }
 
 function stopServices() {
@@ -366,6 +546,9 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, "index.html"));
   mainWindow.setMenuBarVisibility(false);
+  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    console.log(`[Renderer:${level}] ${message} (${sourceId}:${line})`);
+  });
   mainWindow.on("closed", () => { mainWindow = null; });
 }
 
@@ -374,23 +557,27 @@ function registerIpc() {
   if (!ipcMain) return;
 
   ipcMain.handle("read-detection-log", () => readJsonSafe(DETECTION_LOG, []));
+  ipcMain.handle("readDetectionLog", () => readJsonSafe(DETECTION_LOG, []));
   ipcMain.handle("read-reputation-db", () => readJsonSafe(REPUTATION_DB, {}));
+  ipcMain.handle("readReputationDb", () => readJsonSafe(REPUTATION_DB, {}));
+  ipcMain.handle("analyze-file-path", async (_event, filePath) => analyzeFile(filePath));
 
   ipcMain.handle("scanner-status", async () => {
     const status = await buildSystemStatus();
-    return { running: status.scannerUp };
+    return { running: status.scannerOnline };
   });
   ipcMain.handle("monitor-status", async () => {
     const status = await buildSystemStatus();
-    return { running: status.monitorUp };
+    return { running: status.monitorRunning };
   });
   ipcMain.handle("extension-status", async () => {
     const status = await buildSystemStatus();
     return {
-      connected: status.extensionConnected,
+      connected: status.extensionActive,
       lastExtensionEventAt: status.lastExtensionEventAt,
     };
   });
+  ipcMain.handle("get-system-status", async () => buildSystemStatus());
   ipcMain.handle("system-status", async () => {
     return buildSystemStatus();
   });
@@ -422,11 +609,10 @@ function registerIpc() {
 
 // ── App lifecycle ───────────────────────────────────────────
 if (app) {
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     registerIpc();
     createWindow();
-    startScannerApi();
-    startFileMonitor();
+    await ensureServices();
     startStatusBroadcast();
     pushStatusUpdate();
 
@@ -449,9 +635,14 @@ if (app) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     inferExtensionConnectivity,
+    inferMonitorRunning,
+    inferScannerOnline,
     detectionLogRecentlyUpdated,
+    buildStatusPayload,
+    getPythonCandidates,
     mergeSettings,
     isSupportedPlatformEvent,
+    isFilePlatformEvent,
     canStopExternalProcess,
     resolveProjectRoot,
     startService,
